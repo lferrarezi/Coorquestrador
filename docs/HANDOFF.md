@@ -43,7 +43,7 @@ Separação entre DETERMINISMO e RACIOCÍNIO:
   squad não consegue quebrar a capacidade principal.
 
 ## FORMATO ATUAL
-Extensão do VSCode (versão 0.1.4). Repositório:
+Extensão do VSCode (versão 0.1.5). Repositório:
 github.com/lferrarezi/Coorquestrador (branch main). O escopo atual é exclusivamente
 VS Code; formatos externos foram descartados.
 
@@ -127,7 +127,7 @@ coorq.maxParallel, coorq.requireGate1.
 ## ESTADO ATUAL / O QUE JÁ FUNCIONA
 - Pipeline validado ponta-a-ponta: planejar (claude) → rotear → executar (criou
   arquivo real). 5 assistentes respondem (claude, codex, devin, gemini, copilot).
-- Build 0.1.4 empacotada e instalável (.vsix).
+- Build 0.1.5 empacotada e instalável (.vsix).
 - Convenção de versão: minor impar e trilha pre-release (0.1.x, 0.3.x);
   minor par e release final (0.2.x, 0.4.x). Correcoes menores incrementam patch
   dentro da mesma trilha.

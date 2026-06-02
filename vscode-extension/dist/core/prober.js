@@ -172,11 +172,36 @@ const KNOWN_CLIS = [
 function pathEnv(env) {
     return env.PATH || env.Path || env.path || "";
 }
+function pathDelimiter(platform = process.platform) {
+    return platform === "win32" ? ";" : path.delimiter;
+}
 function executableExtensions(env, platform = process.platform) {
     if (platform !== "win32")
         return [""];
     const pathext = env.PATHEXT || ".COM;.EXE;.BAT;.CMD;.PS1";
     return ["", ...pathext.split(";").map((e) => e.trim().toLowerCase()).filter(Boolean)];
+}
+function candidateDirs(env, platform = process.platform) {
+    const dirs = pathEnv(env).split(pathDelimiter(platform)).filter(Boolean);
+    if (platform === "win32") {
+        const appData = env.APPDATA;
+        const localAppData = env.LOCALAPPDATA;
+        const userProfile = env.USERPROFILE || env.HOME;
+        const programData = env.ProgramData || "C:\\ProgramData";
+        if (appData)
+            dirs.push(path.join(appData, "npm"));
+        if (appData)
+            dirs.push(path.join(appData, "npm", "node_modules", ".bin"));
+        if (localAppData)
+            dirs.push(path.join(localAppData, "pnpm"));
+        if (userProfile)
+            dirs.push(path.join(userProfile, ".local", "bin"));
+        if (userProfile)
+            dirs.push(path.join(userProfile, "scoop", "shims"));
+        if (programData)
+            dirs.push(path.join(programData, "chocolatey", "bin"));
+    }
+    return [...new Set(dirs)];
 }
 /** Resolve um CLI no PATH sem depender de `command -v`, para funcionar no Windows. */
 function resolveBinPath(bin, env = process.env, platform = process.platform) {
@@ -187,7 +212,7 @@ function resolveBinPath(bin, env = process.env, platform = process.platform) {
         return "";
     if (path.isAbsolute(exe) && fs.existsSync(exe))
         return exe;
-    const dirs = pathEnv(env).split(path.delimiter).filter(Boolean);
+    const dirs = candidateDirs(env, platform);
     const exts = executableExtensions(env, platform);
     const hasExt = path.extname(exe).length > 0;
     for (const dir of dirs) {
@@ -200,8 +225,17 @@ function resolveBinPath(bin, env = process.env, platform = process.platform) {
     return "";
 }
 /** Verifica se o bin de um engine existe no PATH local. */
-async function whichBin(bin, _timeoutSec) {
-    return resolveBinPath(bin);
+async function whichBin(bin, timeoutSec) {
+    const resolved = resolveBinPath(bin);
+    if (resolved)
+        return resolved;
+    const exe = bin.trim().split(/\s+/)[0];
+    if (process.platform === "win32" && /^[a-zA-Z0-9_.-]+$/.test(exe)) {
+        const r = await run(`where ${exe}`, timeoutSec);
+        if (r.code === 0 && r.stdout.trim())
+            return r.stdout.trim().split(/\r?\n/)[0];
+    }
+    return "";
 }
 /** Descobre modelos disponiveis de um engine rodando seu models_probe (best-effort). */
 async function discoverModels(cfg, timeoutSec) {

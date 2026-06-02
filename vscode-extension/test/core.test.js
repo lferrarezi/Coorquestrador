@@ -195,6 +195,16 @@ async function test(name, fn) {
     assert.equal(resolved, bin);
   });
 
+  await test("resolveBinPath checks Windows npm global bin when PATH is incomplete", () => {
+    const appData = fs.mkdtempSync(path.join(os.tmpdir(), "coorq-appdata-"));
+    const npmDir = path.join(appData, "npm");
+    fs.mkdirSync(npmDir, { recursive: true });
+    const bin = path.join(npmDir, "codex.cmd");
+    fs.writeFileSync(bin, "@echo off\r\necho codex\r\n");
+    const resolved = resolveBinPath("codex", { PATH: "", APPDATA: appData, PATHEXT: ".COM;.EXE;.BAT;.CMD" }, "win32");
+    assert.equal(resolved, bin);
+  });
+
   await test("ensureProjectDefaults creates .coorq in the open project", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coorq-project-"));
     const conf = new CoorqConfig(dir, ".coorq");
