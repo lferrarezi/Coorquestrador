@@ -391,11 +391,19 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("coorq.showDemands", async () => {
       const c = cfg();
-      const conf = new CoorqConfig(c.root, c.configDir);
+      const conf = ensureWorkspaceConfig() || new CoorqConfig(c.root, c.configDir);
       const store = new DemandStore(conf.statePath());
+      await vscode.commands.executeCommand("coorq.demands.focus");
+      demandsProvider.refresh();
       out.show();
       out.appendLine("=== Demandas ===");
-      for (const d of store.list())
+      const demands = store.list();
+      if (demands.length === 0) {
+        out.appendLine("(nenhuma tarefa registrada)");
+        vscode.window.showInformationMessage("Nenhuma tarefa registrada no Coorquestrador.");
+        return;
+      }
+      for (const d of demands)
         out.appendLine(`${d.id} [${d.project}] ${d.title} - ${d.status} - cota ${JSON.stringify(d.estimatedQuotaByEngine || {})}`);
     })
   );

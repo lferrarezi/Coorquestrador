@@ -85,6 +85,11 @@ class ChatPanelProvider {
                 case "openSettings":
                     await vscode.commands.executeCommand("workbench.action.openSettings", "coorq.rootPath");
                     break;
+                case "cmd":
+                    if (typeof msg.command === "string" && msg.command.startsWith("coorq.")) {
+                        await vscode.commands.executeCommand(msg.command);
+                    }
+                    break;
                 case "manageCore":
                     await vscode.commands.executeCommand("coorq.manageAgentCore");
                     await this.detect();

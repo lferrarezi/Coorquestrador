@@ -240,4 +240,10 @@ async function test(name, fn) {
     }, 1);
     assert.deepEqual(models, []);
   });
+
+  await test("chat webview forwards toolbar commands", () => {
+    const src = fs.readFileSync(path.join(__dirname, "..", "src", "ui", "chatPanel.ts"), "utf8");
+    assert.ok(src.includes('case "cmd"'));
+    assert.ok(src.includes("vscode.commands.executeCommand(msg.command)"));
+  });
 })();
