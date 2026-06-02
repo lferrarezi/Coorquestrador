@@ -61,6 +61,31 @@ function listDirNames(packDir, sub) {
         return [];
     return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory() || e.name.endsWith(".md")).map((e) => e.name.replace(/\.md$/, "")).sort();
 }
+/**
+ * Lista os agentes especialistas do pacote. Usa a pasta agents/ se existir;
+ * caso contrario varre recursivamente os *.agent.md (ex.: suites organizadas
+ * em grupos numerados 01-..22-..), excluindo o cerebro coorquestrador.agent.md.
+ */
+function listAgents(packDir) {
+    if (fs.existsSync(path.join(packDir, "agents")))
+        return listDirNames(packDir, "agents");
+    const out = [];
+    const walk = (d, depth) => {
+        if (depth > 6)
+            return;
+        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+            if (e.name.startsWith(".") || e.name === "node_modules" || e.name === "__MACOSX")
+                continue;
+            const fp = path.join(d, e.name);
+            if (e.isDirectory())
+                walk(fp, depth + 1);
+            else if (e.name.endsWith(".agent.md") && e.name !== "coorquestrador.agent.md")
+                out.push(e.name.replace(/\.agent\.md$/, ""));
+        }
+    };
+    walk(packDir, 0);
+    return [...new Set(out)].sort();
+}
 /** Extrai handoffs declarados no frontmatter do coorquestrador.agent.md. */
 function handoffsFromAgent(packDir) {
     const a = path.join(packDir, "coorquestrador.agent.md");
@@ -78,13 +103,14 @@ function readManifest(packDir, fallbackName = "") {
     if (fs.existsSync(mf)) {
         try {
             const m = JSON.parse(fs.readFileSync(mf, "utf8"));
+            const nz = (a, fb) => (Array.isArray(a) && a.length ? a : fb);
             return {
                 name: m.name || fallbackName || path.basename(packDir),
                 version: String(m.version || "0.0.0"),
                 description: m.description,
-                skills: m.skills || listSkillNames(packDir),
-                agents: m.agents || listDirNames(packDir, "agents"),
-                handoffs: m.handoffs || handoffsFromAgent(packDir),
+                skills: nz(m.skills, listSkillNames(packDir)),
+                agents: nz(m.agents, listAgents(packDir)),
+                handoffs: nz(m.handoffs, handoffsFromAgent(packDir)),
                 generated: false,
             };
         }
@@ -95,7 +121,7 @@ function readManifest(packDir, fallbackName = "") {
         version: "0.0.0",
         description: undefined,
         skills: listSkillNames(packDir),
-        agents: listDirNames(packDir, "agents"),
+        agents: listAgents(packDir),
         handoffs: handoffsFromAgent(packDir),
         generated: true,
     };
