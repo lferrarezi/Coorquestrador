@@ -118,12 +118,34 @@ class ChatPanelProvider {
     async detect() {
         const c = this.deps.cfg();
         if (!c.root) {
-            this.post({ type: "installed", engines: [], error: "Configure a pasta-raiz nas configuracoes (coorq.rootPath)." });
+            const found = await (0, prober_1.discoverInstalledClis)();
+            const installed = found.filter((e) => e.installed).map((e) => ({
+                id: e.id,
+                bin: e.bin,
+                installed: e.installed,
+                binPath: e.binPath,
+                models: e.models,
+                default_model: e.models[0] || "",
+                powers: ["normal"],
+                modelsAutoDetected: e.modelsAutoDetected,
+            }));
+            this.post({ type: "installed", engines: installed, selection: this.selection, error: installed.length ? undefined : "Configure a pasta-raiz nas configuracoes (coorq.rootPath)." });
             return;
         }
         const conf0 = new config_1.CoorqConfig(c.root, c.configDir);
         if (!fs.existsSync(conf0.enginesPath())) {
-            this.post({ type: "installed", engines: [], error: `Configuracao nao encontrada em ${conf0.enginesPath()}. Crie a pasta ${c.configDir}/ na raiz (copie de sample-root/.coorq).` });
+            const found = await (0, prober_1.discoverInstalledClis)();
+            const installed = found.filter((e) => e.installed).map((e) => ({
+                id: e.id,
+                bin: e.bin,
+                installed: e.installed,
+                binPath: e.binPath,
+                models: e.models,
+                default_model: e.models[0] || "",
+                powers: ["normal"],
+                modelsAutoDetected: e.modelsAutoDetected,
+            }));
+            this.post({ type: "installed", engines: installed, selection: this.selection, error: installed.length ? undefined : `Configuracao nao encontrada em ${conf0.enginesPath()}. Crie a pasta ${c.configDir}/ na raiz (copie de sample-root/.coorq).` });
             return;
         }
         try {

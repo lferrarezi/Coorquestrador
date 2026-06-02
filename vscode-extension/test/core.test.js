@@ -10,6 +10,7 @@ const { executePlan } = require("../dist/core/executor");
 const { DemandStore } = require("../dist/core/demandStore");
 const { buildCommand } = require("../dist/core/commandBuilder");
 const { ensureInsideDir, redactCommand, redactSecrets, validateExecTemplate } = require("../dist/core/commandSecurity");
+const { discoverInstalledClis } = require("../dist/core/prober");
 
 function baseEngines() {
   return {
@@ -156,5 +157,31 @@ async function test(name, fn) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coorq-specs-"));
     assert.throws(() => ensureInsideDir(path.join(dir, "..", "escape.spec.md"), dir), /fora do diretorio/);
     assert.equal(ensureInsideDir(path.join(dir, "ok.spec.md"), dir), path.join(dir, "ok.spec.md"));
+  });
+
+  await test("discoverInstalledClis finds configured CLI and declared models", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coorq-cli-"));
+    const bin = path.join(dir, "fakeai");
+    fs.writeFileSync(bin, "#!/bin/sh\necho fakeai 1.0\n", { mode: 0o755 });
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${dir}${path.delimiter}${oldPath || ""}`;
+    try {
+      const engines = baseEngines();
+      engines.engines.fakeai = {
+        ...engines.engines.codex,
+        bin: "fakeai",
+        models_probe: undefined,
+        models: ["fake-model-a", "fake-model-b"],
+        default_model: "fake-model-a",
+      };
+      const result = await discoverInstalledClis(1, engines);
+      const fake = result.find((cli) => cli.id === "fakeai");
+      assert.ok(fake);
+      assert.equal(fake.installed, true);
+      assert.equal(fake.binPath, bin);
+      assert.deepEqual(fake.models, ["fake-model-a", "fake-model-b"]);
+    } finally {
+      process.env.PATH = oldPath;
+    }
   });
 })();

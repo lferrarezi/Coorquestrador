@@ -1,7 +1,7 @@
 // src/core/prober.ts
 // Probe hibrido: a config declara os engines; aqui validamos em runtime.
 
-import { execFile } from "child_process";
+import { exec } from "child_process";
 import { EnginesFile } from "./config";
 import { EngineConfig, EngineSnapshot, EngineState } from "./types";
 
@@ -11,10 +11,7 @@ function run(cmd: string, timeoutSec: number): Promise<{ code: number; stdout: s
       resolve({ code: -1, stdout: "", stderr: "no-command" });
       return;
     }
-    const parts = cmd.split(" ");
-    const bin = parts[0];
-    const args = parts.slice(1);
-    execFile(bin, args, { timeout: timeoutSec * 1000, shell: true }, (err, stdout, stderr) => {
+    exec(cmd, { timeout: timeoutSec * 1000 }, (err, stdout, stderr) => {
       const code = err && typeof (err as any).code === "number" ? (err as any).code : err ? 1 : 0;
       resolve({ code, stdout: stdout || "", stderr: stderr || "" });
     });
@@ -99,6 +96,68 @@ export interface InstalledEngine {
   modelsAutoDetected?: boolean;
 }
 
+export interface CliDiscoveryResult {
+  id: string;
+  bin: string;
+  installed: boolean;
+  binPath: string;
+  models: string[];
+  modelsAutoDetected: boolean;
+  source: "known-cli" | "configured-engine";
+  detail?: string;
+}
+
+interface KnownCliDefinition {
+  id: string;
+  bin: string;
+  models_probe?: EngineConfig["models_probe"];
+  fallbackModels?: string[];
+}
+
+const KNOWN_CLIS: KnownCliDefinition[] = [
+  {
+    id: "claude-code",
+    bin: "claude",
+    fallbackModels: ["opus", "sonnet", "haiku"],
+  },
+  {
+    id: "codex",
+    bin: "codex",
+    models_probe: {
+      command: "grep -hoE 'gpt-[0-9][a-zA-Z0-9.-]*' ~/.codex/.codex-global-state.json ~/.codex/sessions/*/*/*/*.jsonl 2>/dev/null | sort -u",
+      parse: "lines",
+    },
+    fallbackModels: ["gpt-5.5", "gpt-5.4"],
+  },
+  {
+    id: "devin-cli",
+    bin: "devin",
+    models_probe: {
+      command: "devin --model x --permission-mode auto -p ping 2>&1 | grep -oE '(claude|gemini|gpt|deepseek|glm|kimi|swe)-[a-z0-9.-]+' | sort -u",
+      parse: "lines",
+    },
+    fallbackModels: ["claude-haiku-4.5", "swe-1.6-fast", "swe-1.5", "gemini-3-flash"],
+  },
+  {
+    id: "gemini-cli",
+    bin: "gemini",
+    models_probe: {
+      command: "grep -rhoE 'gemini-[0-9.]+-(pro|flash-lite|flash)' ~/.gemini 2>/dev/null | sort -u",
+      parse: "lines",
+    },
+    fallbackModels: ["gemini-2.5-pro", "gemini-2.5-flash"],
+  },
+  {
+    id: "github-copilot-cli",
+    bin: "copilot",
+    models_probe: {
+      command: "strings ~/.copilot/session-store.db 2>/dev/null | grep -oE '(claude|gpt|gemini)-[a-zA-Z0-9.-]+' | sort -u",
+      parse: "lines",
+    },
+    fallbackModels: ["claude-haiku-4.5", "gpt-5.2", "claude-sonnet-4.5"],
+  },
+];
+
 /** Verifica se o bin de um engine existe no PATH local (command -v). */
 async function whichBin(bin: string, timeoutSec: number): Promise<string> {
   if (!bin || !bin.trim()) return "";
@@ -116,11 +175,11 @@ export async function discoverModels(cfg: EngineConfig, timeoutSec: number): Pro
     try {
       const obj = JSON.parse(r.stdout);
       const at = mp.json_path ? jsonPathArray(obj, mp.json_path) : obj;
-      return Array.isArray(at) ? at.map(String) : [];
+      return Array.isArray(at) ? normalizeModelCandidates(at.map(String)) : [];
     } catch { return []; }
   }
   // parse "lines": uma linha por modelo, dedup, sem vazios.
-  return [...new Set(r.stdout.split("\n").map((s) => s.trim()).filter(Boolean))];
+  return normalizeModelCandidates(r.stdout.split("\n"));
 }
 
 function jsonPathArray(obj: any, expr: string): any {
@@ -128,6 +187,16 @@ function jsonPathArray(obj: any, expr: string): any {
   let cur = obj;
   for (const k of expr.slice(2).split(".")) { if (cur == null) return null; cur = cur[k]; }
   return cur;
+}
+
+function normalizeModelCandidates(values: string[]): string[] {
+  return [...new Set(values
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((s) => s.length <= 80)
+    .filter((s) => /^[a-z0-9][a-z0-9._-]*$/i.test(s))
+    .filter((s) => !/(prompt|skill|agent|mode|tool)$/i.test(s))
+    .filter((s) => !/(prompting|system-prompt|agent-packs)/i.test(s)))];
 }
 
 /** Detecta quais engines declarados tem CLI instalado na maquina local + modelos. */
@@ -161,6 +230,76 @@ export async function detectInstalled(enginesFile: EnginesFile): Promise<Install
       };
     })
   );
+}
+
+function probeConfigFromKnownCli(cli: KnownCliDefinition): EngineConfig {
+  return {
+    enabled: true,
+    location: "local",
+    host: "localhost",
+    bin: cli.bin,
+    input_mode: "arg",
+    probe: { command: `${cli.bin} --version`, expect_exit_code: 0 },
+    credit_probe: { command: "", parse: "text" },
+    models_probe: cli.models_probe,
+    exec_template: "",
+    models: cli.fallbackModels || [],
+    default_model: cli.fallbackModels?.[0] || "",
+    powers: ["normal"],
+    unit: "token",
+    best_for: [],
+  };
+}
+
+function uniqueById(items: CliDiscoveryResult[]): CliDiscoveryResult[] {
+  const byId = new Map<string, CliDiscoveryResult>();
+  for (const item of items) {
+    const cur = byId.get(item.id);
+    if (!cur || (!cur.installed && item.installed) || (item.modelsAutoDetected && !cur.modelsAutoDetected)) {
+      byId.set(item.id, item);
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** Descobre CLIs conhecidos no PATH e tenta listar os modelos disponiveis de cada um. */
+export async function discoverInstalledClis(
+  timeoutSec = 10,
+  enginesFile?: EnginesFile
+): Promise<CliDiscoveryResult[]> {
+  const configured: KnownCliDefinition[] = enginesFile
+    ? Object.entries(enginesFile.engines)
+        .filter(([, cfg]) => cfg.enabled !== false && cfg.location === "local")
+        .map(([id, cfg]) => ({
+          id,
+          bin: cfg.bin,
+          models_probe: cfg.models_probe,
+          fallbackModels: cfg.models || [],
+        }))
+    : [];
+
+  const candidates = [...KNOWN_CLIS, ...configured];
+  const found = await Promise.all(candidates.map(async (cli) => {
+    const binPath = await whichBin(cli.bin, timeoutSec);
+    const installed = binPath.length > 0;
+    const cfg = probeConfigFromKnownCli(cli);
+    const discovered = installed ? await discoverModels(cfg, timeoutSec) : [];
+    const models = discovered.length
+      ? [...new Set([...discovered, ...(cli.fallbackModels || [])])]
+      : (cli.fallbackModels || []);
+    return {
+      id: cli.id,
+      bin: cli.bin,
+      installed,
+      binPath,
+      models,
+      modelsAutoDetected: discovered.length > 0,
+      source: configured.some((c) => c.id === cli.id && c.bin === cli.bin) ? "configured-engine" as const : "known-cli" as const,
+      detail: installed ? undefined : "CLI nao encontrado no PATH",
+    };
+  }));
+
+  return uniqueById(found);
 }
 
 /** Engines elegiveis para roteamento: disponiveis e com credito acima do limite. */

@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import { CoorqConfig } from "./core/config";
-import { probeAll, eligible } from "./core/prober";
+import { probeAll, eligible, discoverInstalledClis } from "./core/prober";
 import { estimateDemand, estimateDemandQuota } from "./core/estimator";
 import { runDemandExecution } from "./core/executionService";
 import { DemandStore } from "./core/demandStore";
@@ -39,6 +39,40 @@ function projectContext(root: string, project: string): string {
   return parts.join("\n\n");
 }
 
+async function discoverAndShowClis(
+  out: vscode.OutputChannel,
+  enginesProvider: EnginesProvider,
+  context: vscode.ExtensionContext
+) {
+  const c = cfg();
+  let confEngines;
+  if (c.root) {
+    const conf = new CoorqConfig(c.root, c.configDir);
+    if (fs.existsSync(conf.enginesPath())) {
+      try { confEngines = conf.loadEngines(); } catch { /* discovery still works without project config */ }
+    }
+  }
+  const timeout = confEngines?.defaults?.probe_timeout_seconds || 10;
+  const found = await discoverInstalledClis(timeout, confEngines);
+  await context.globalState.update("coorq.cliDiscovery", found);
+  out.appendLine("Discovery de CLIs:");
+  for (const cli of found) {
+    if (!cli.installed) continue;
+    const models = cli.models.length ? ` modelos=${cli.models.join(", ")}` : " modelos=n/d";
+    out.appendLine(`  ${cli.id}: ${cli.binPath}${models}${cli.modelsAutoDetected ? " (auto)" : " (fallback)"}`);
+  }
+  enginesProvider.setSnapshots(found.map((cli) => ({
+    id: cli.id,
+    state: cli.installed ? "disponivel" : "offline",
+    creditRemaining: null,
+    probedAt: new Date().toISOString(),
+    detail: cli.installed
+      ? `${cli.binPath}${cli.models.length ? ` · modelos: ${cli.models.join(", ")}` : ""}`
+      : cli.detail || "CLI nao encontrado",
+  })));
+  return found;
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const out = vscode.window.createOutputChannel("Coorquestrador");
 
@@ -61,6 +95,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider("coorq.demands", demandsProvider),
     vscode.window.registerTreeDataProvider("coorq.engines", enginesProvider)
   );
+
+  discoverAndShowClis(out, enginesProvider, context).catch((e: any) => {
+    out.appendLine(`Falha no discovery inicial de CLIs: ${e.message}`);
+  });
 
   context.subscriptions.push(
     vscode.commands.registerCommand("coorq.openTaskLog", async (node?: TaskNode) => {
@@ -176,11 +214,24 @@ export function activate(context: vscode.ExtensionContext) {
 
   // PROBE
   context.subscriptions.push(
+    vscode.commands.registerCommand("coorq.discoverClis", async () => {
+      out.show();
+      const found = await discoverAndShowClis(out, enginesProvider, context);
+      const installed = found.filter((cli) => cli.installed);
+      vscode.window.showInformationMessage(
+        installed.length
+          ? `CLIs detectados: ${installed.map((cli) => `${cli.id}${cli.models.length ? ` (${cli.models.length} modelo(s))` : ""}`).join(", ")}`
+          : "Nenhum CLI conhecido encontrado no PATH."
+      );
+      return found;
+    }),
     vscode.commands.registerCommand("coorq.probeEngines", async () => {
       const c = cfg();
       const conf = new CoorqConfig(c.root, c.configDir);
       const ef = conf.loadEngines();
       out.show();
+      const discovered = await discoverAndShowClis(out, enginesProvider, context);
+      out.appendLine(`CLIs instalados: ${discovered.filter((cli) => cli.installed).map((cli) => cli.id).join(", ") || "(nenhum)"}`);
       out.appendLine("Probing engines...");
       const snaps = await probeAll(ef);
       for (const s of snaps) out.appendLine(`  ${s.id}: ${s.state} (cota=${s.creditRemaining != null ? s.creditRemaining + "%" : "n/d"}) ${s.detail}`);

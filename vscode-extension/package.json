@@ -2,7 +2,7 @@
   "name": "coorquestrador",
   "displayName": "Coorquestrador",
   "description": "Meta-orquestrador de runtime: planeja demandas, escolhe engines de IA (CLI), estima consumo de cota, executa com gates HITL e acompanha multiprojetos.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "lferrarezi",
   "author": {
     "name": "Luiz Alberto Abarca Ferrarezi"
@@ -33,6 +33,10 @@
       {
         "command": "coorq.probeEngines",
         "title": "Coorquestrador: Verificar cota dos assistentes"
+      },
+      {
+        "command": "coorq.discoverClis",
+        "title": "Coorquestrador: Descobrir CLIs e modelos"
       },
       {
         "command": "coorq.planDemand",

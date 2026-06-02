@@ -9,7 +9,7 @@ import * as path from "path";
 import { CoorqConfig } from "../core/config";
 import { DemandStore } from "../core/demandStore";
 import { runChat, buildChatPrompt, ChatTurn } from "../core/chat";
-import { detectInstalled, probeAll } from "../core/prober";
+import { discoverInstalledClis, detectInstalled, probeAll } from "../core/prober";
 import { buildPlannerPrompt, parsePlan, runPlanner } from "../core/planner";
 import { estimateDemand, estimateDemandQuota } from "../core/estimator";
 import { validatePlan } from "../core/planValidation";
@@ -80,10 +80,35 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   // ---------- DETECCAO ----------
   private async detect() {
     const c = this.deps.cfg();
-    if (!c.root) { this.post({ type: "installed", engines: [], error: "Configure a pasta-raiz nas configuracoes (coorq.rootPath)." }); return; }
+    if (!c.root) {
+      const found = await discoverInstalledClis();
+      const installed = found.filter((e) => e.installed).map((e) => ({
+        id: e.id,
+        bin: e.bin,
+        installed: e.installed,
+        binPath: e.binPath,
+        models: e.models,
+        default_model: e.models[0] || "",
+        powers: ["normal"],
+        modelsAutoDetected: e.modelsAutoDetected,
+      }));
+      this.post({ type: "installed", engines: installed, selection: this.selection, error: installed.length ? undefined : "Configure a pasta-raiz nas configuracoes (coorq.rootPath)." });
+      return;
+    }
     const conf0 = new CoorqConfig(c.root, c.configDir);
     if (!fs.existsSync(conf0.enginesPath())) {
-      this.post({ type: "installed", engines: [], error: `Configuracao nao encontrada em ${conf0.enginesPath()}. Crie a pasta ${c.configDir}/ na raiz (copie de sample-root/.coorq).` });
+      const found = await discoverInstalledClis();
+      const installed = found.filter((e) => e.installed).map((e) => ({
+        id: e.id,
+        bin: e.bin,
+        installed: e.installed,
+        binPath: e.binPath,
+        models: e.models,
+        default_model: e.models[0] || "",
+        powers: ["normal"],
+        modelsAutoDetected: e.modelsAutoDetected,
+      }));
+      this.post({ type: "installed", engines: installed, selection: this.selection, error: installed.length ? undefined : `Configuracao nao encontrada em ${conf0.enginesPath()}. Crie a pasta ${c.configDir}/ na raiz (copie de sample-root/.coorq).` });
       return;
     }
     try {
