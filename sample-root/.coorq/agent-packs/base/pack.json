@@ -1,0 +1,8 @@
+{
+  "name": "base",
+  "version": "1.0.0",
+  "description": "Nucleo base do Coorquestrador: planejamento de demandas, roteamento de engine/modelo e estimativa de custo/cota.",
+  "skills": ["demand-planning", "engine-routing", "cost-estimation"],
+  "agents": [],
+  "handoffs": ["squad-orchestrator", "workflow-router", "context-librarian", "risk-triage-agent", "decision-recorder", "estimation-agent", "quality-gate-controller"]
+}

@@ -1,0 +1,46 @@
+# config/cost-table.yaml
+# Tabela de custos por modelo + potencia. Usada pela skill cost-estimation.
+# Precos sao PLACEHOLDERS - ajuste para os valores reais dos seus contratos.
+# unit: token => preco por 1M tokens (input/output medios). unit: acu => preco por ACU.
+
+version: 1
+currency: USD
+
+# Multiplicador de potencia: afeta tokens de raciocinio / esforco e, portanto, custo.
+power_multiplier:
+  low: 0.5
+  normal: 1.0
+  medium: 1.8
+  high: 3.0
+
+# Preco base por modelo (por 1M tokens, salvo unidade acu).
+models:
+  opus-4.8:    { unit: token, price_per_million: 18.00 }
+  opus-4.7:    { unit: token, price_per_million: 15.00 }
+  sonnet-4.6:  { unit: token, price_per_million: 3.00 }
+  gpt-5.5:     { unit: token, price_per_million: 14.00 }
+  gpt-5.4:     { unit: token, price_per_million: 9.00 }
+  gpt-5.3:     { unit: token, price_per_million: 6.00 }
+  gemini-3.5:  { unit: token, price_per_million: 5.00 }
+  gemini-3.1:  { unit: token, price_per_million: 2.00 }
+  devin-default: { unit: acu, price_per_acu: 2.25 }
+
+# Heuristica de estimativa de tamanho por classe de tarefa (tokens estimados de I/O).
+# A skill demand-planning classifica cada tarefa em uma destas classes.
+task_size_tokens:
+  trivial:     8000      # rename, fix de uma linha, ajuste de config
+  small:       30000     # funcao isolada, teste unitario, doc curto
+  medium:      120000    # feature pequena multi-arquivo
+  large:       400000    # feature completa, refactor amplo
+  xlarge:      1200000   # modulo inteiro, migracao
+
+# Estimativa em ACUs para engines que cobram em ACU (por classe de tarefa).
+task_size_acu:
+  trivial: 1
+  small:   3
+  medium:  8
+  large:   25
+  xlarge:  70
+
+# Teto de custo que dispara o Gate 2 (entrega) automaticamente.
+cost_gate2_threshold: 5.00

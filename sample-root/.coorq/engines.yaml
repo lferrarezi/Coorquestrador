@@ -1,0 +1,154 @@
+# config/engines.yaml
+# Declaracao estatica dos engines (CLIs de IA). O probe valida em runtime.
+# Sintaxe ajustada as CLIs reais instaladas (jun/2026).
+# Templates: {spec_file}, {prompt}, {model}, {power}, {cwd}
+
+version: 1
+
+defaults:
+  min_credit_threshold: 5      # cota minima (%) para entrar no roteamento
+  probe_timeout_seconds: 15
+  exec_timeout_seconds: 1800
+  max_parallel: 3              # concorrencia maxima de execucoes simultaneas
+
+engines:
+
+  claude-code:
+    enabled: true
+    location: local
+    host: localhost
+    bin: claude
+    input_mode: stdin                     # prompt enviado via stdin
+    probe:
+      command: "claude --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: ""                         # claude nao expoe saldo via CLI
+      parse: json
+      json_path: "$.credits_remaining"
+    # -p/--print = nao-interativo; prompt vem do stdin
+    exec_template: "claude -p --model {model} --permission-mode acceptEdits"
+    models: [opus, sonnet, haiku]         # aliases aceitos pela CLI
+    default_model: sonnet
+    powers: [low, normal, medium, high]
+    unit: token
+    best_for: [agentic-coding, refactor, multi-file, repo-wide, spec-driven]
+
+  codex:
+    enabled: true
+    location: local
+    host: localhost
+    bin: codex
+    input_mode: arg
+    probe:
+      command: "codex --version"
+      expect_exit_code: 0
+    # cota restante (%) da janela primaria, lida do estado da sessao
+    credit_probe:
+      command: "f=$(ls -t ~/.codex/sessions/*/*/*/*.jsonl 2>/dev/null | head -1); grep -oE '\"primary\":\\{\"used_percent\":[0-9.]+' \"$f\" | tail -1 | grep -oE '[0-9.]+$' | awk '{printf \"%.0f\", 100-$1}'"
+      parse: text
+    # exec = nao-interativo; --skip-git-repo-check evita falha fora de repo git
+    exec_template: "codex exec -m {model} --skip-git-repo-check {prompt}"
+    # descoberta automatica de modelos a partir do estado da CLI
+    models_probe:
+      command: "grep -hoE 'gpt-[0-9][a-zA-Z0-9.-]*' ~/.codex/.codex-global-state.json 2>/dev/null | sort -u"
+      parse: lines
+    models: [gpt-5.5, gpt-5.4]                  # fallback se a descoberta falhar
+    default_model: gpt-5.5
+    powers: [low, normal, medium, high]
+    unit: token
+    best_for: [agentic-coding, autonomous-tasks, test-generation]
+
+  # Kiro e um EDITOR (fork do VSCode), nao um agente CLI headless.
+  # Sem modo exec por prompt -> desabilitado como engine de execucao.
+  kiro:
+    enabled: false
+    location: local
+    host: localhost
+    bin: kiro
+    input_mode: file
+    probe:
+      command: "kiro --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: ""
+      parse: text
+    exec_template: ""
+    models: [sonnet-4.6]
+    default_model: sonnet-4.6
+    powers: [normal]
+    unit: token
+    best_for: [spec-driven, sdd]
+
+  devin-cli:
+    enabled: true
+    location: local                       # devin roda local (tambem tem cloud)
+    host: localhost
+    bin: devin
+    input_mode: arg
+    probe:
+      command: "devin --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: ""                         # sem subcomando de ACU exposto na CLI atual
+      parse: json
+      json_path: "$.acu_remaining"
+    # -p/--print = nao-interativo; permission-mode auto aprova so leitura
+    exec_template: "devin --model {model} --permission-mode auto -p {prompt}"
+    # devin lista os modelos disponiveis na msg de erro de modelo invalido
+    models_probe:
+      command: "devin --model x --permission-mode auto -p ping 2>&1 | grep -oE '(claude|gemini|gpt|deepseek|glm|kimi|swe)-[a-z0-9.-]+' | sort -u"
+      parse: lines
+    models: [claude-haiku-4.5, swe-1.6-fast, swe-1.5, gemini-3-flash]   # fallback (acessiveis no plano)
+    default_model: claude-haiku-4.5
+    powers: [normal, high]
+    unit: acu
+    best_for: [long-autonomous, end-to-end-features, background-tasks]
+
+  gemini-cli:
+    enabled: true
+    location: local
+    host: localhost
+    bin: gemini
+    input_mode: arg
+    probe:
+      command: "gemini --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: ""
+      parse: json
+      json_path: "$.quota.remaining"
+    # -p = headless; --approval-mode yolo auto-aprova tools
+    exec_template: "gemini -m {model} --approval-mode yolo -p {prompt}"
+    models_probe:
+      command: "grep -rhoE 'gemini-[0-9.]+-(pro|flash-lite|flash)' ~/.gemini 2>/dev/null | sort -u"
+      parse: lines
+    models: [gemini-2.5-pro, gemini-2.5-flash]   # fallback
+    default_model: gemini-2.5-pro
+    powers: [low, normal, medium, high]
+    unit: token
+    best_for: [large-context, analysis, docs, fast-cheap-tasks]
+
+  github-copilot-cli:
+    enabled: true
+    location: local
+    host: localhost
+    bin: copilot
+    input_mode: arg
+    probe:
+      command: "copilot --version"
+      expect_exit_code: 0
+    # cota restante (%) de chat, via API interna do GitHub Copilot
+    credit_probe:
+      command: "gh api /copilot_internal/user -q .quota_snapshots.chat.percent_remaining 2>/dev/null"
+      parse: text
+    # -p = nao-interativo; --allow-all-tools necessario para executar sem prompt
+    exec_template: "copilot -p {prompt} --model {model} --allow-all-tools --no-color"
+    models_probe:
+      command: "strings ~/.copilot/session-store.db 2>/dev/null | grep -oE '(claude|gpt|gemini)-[a-zA-Z0-9.-]+' | sort -u"
+      parse: lines
+    models: [claude-haiku-4.5, gpt-5.2, claude-sonnet-4.5]   # fallback
+    default_model: claude-haiku-4.5
+    powers: [normal]
+    unit: token
+    best_for: [inline-edits, small-fixes, command-suggestions]

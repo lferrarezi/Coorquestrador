@@ -1,0 +1,135 @@
+# config/engines.yaml
+# Declaracao estatica dos engines (CLIs de IA). O probe valida em runtime.
+# Modo hibrido: o que esta aqui e a "verdade declarada"; o probe confirma.
+
+version: 1
+
+defaults:
+  min_credit_threshold: 0.05   # fracao minima de credito para entrar no roteamento (5%)
+  probe_timeout_seconds: 15
+  exec_timeout_seconds: 1800
+  max_parallel: 3              # concorrencia maxima de execucoes simultaneas
+
+engines:
+
+  claude-code:
+    enabled: true
+    location: local                       # local | servidor designado (host)
+    host: localhost
+    bin: claude
+    # como o engine recebe prompt+spec: arg | stdin | file
+    input_mode: stdin
+    # probe de disponibilidade + autenticacao
+    probe:
+      command: "claude --version"
+      expect_exit_code: 0
+    # probe de credito/cota (deixe vazio se nao houver; cai para config manual)
+    credit_probe:
+      command: ""                         # ex.: "claude usage --json"
+      parse: json
+      json_path: "$.credits_remaining"
+    # template de execucao. {spec_file}, {prompt}, {model}, {power}, {cwd}
+    exec_template: "claude -p --model {model} --permission-mode acceptEdits {prompt}"
+    models: [opus-4.8, opus-4.7, sonnet-4.6]
+    default_model: sonnet-4.6
+    powers: [low, normal, medium, high]
+    unit: token                           # token | acu
+    best_for: [agentic-coding, refactor, multi-file, repo-wide, spec-driven]
+
+  codex:
+    enabled: true
+    location: local
+    host: localhost
+    bin: codex
+    input_mode: arg
+    probe:
+      command: "codex --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: ""
+      parse: json
+      json_path: "$.balance"
+    exec_template: "codex exec --model {model} {prompt}"
+    models: [gpt-5.5, gpt-5.4, gpt-5.3]
+    default_model: gpt-5.4
+    powers: [low, normal, medium, high]
+    unit: token
+    best_for: [agentic-coding, autonomous-tasks, test-generation]
+
+  kiro:
+    enabled: true
+    location: local
+    host: localhost
+    bin: kiro
+    input_mode: file
+    probe:
+      command: "kiro --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: ""
+      parse: text
+    exec_template: "kiro run --spec {spec_file} --model {model}"
+    models: [sonnet-4.6, opus-4.7]
+    default_model: sonnet-4.6
+    powers: [normal, medium, high]
+    unit: token
+    best_for: [spec-driven, sdd, structured-features]
+
+  devin-cli:
+    enabled: true
+    location: servidor
+    host: devin-host           # servidor designado
+    bin: devin
+    input_mode: arg
+    probe:
+      command: "devin status"
+      expect_exit_code: 0
+    credit_probe:
+      command: "devin acu --json"   # Devin cobra em ACUs
+      parse: json
+      json_path: "$.acu_remaining"
+    exec_template: "devin run --task {prompt} --model {model}"
+    models: [devin-default]
+    default_model: devin-default
+    powers: [normal, high]
+    unit: acu
+    best_for: [long-autonomous, end-to-end-features, background-tasks]
+
+  gemini-cli:
+    enabled: true
+    location: local
+    host: localhost
+    bin: gemini
+    input_mode: stdin
+    probe:
+      command: "gemini --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: ""
+      parse: json
+      json_path: "$.quota.remaining"
+    exec_template: "gemini -m {model} -p {prompt}"
+    models: [gemini-3.5, gemini-3.1]
+    default_model: gemini-3.1
+    powers: [low, normal, medium, high]
+    unit: token
+    best_for: [large-context, analysis, docs, fast-cheap-tasks]
+
+  github-copilot-cli:
+    enabled: true
+    location: local
+    host: localhost
+    bin: copilot
+    input_mode: arg
+    probe:
+      command: "copilot --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: ""
+      parse: text
+    exec_template: "copilot -p {prompt} --model {model}"
+    models: [gpt-5.4, sonnet-4.6]
+    default_model: gpt-5.4
+    powers: [normal]            # copilot cli: pouca granularidade de potencia
+    unit: token
+    best_for: [inline-edits, small-fixes, command-suggestions]

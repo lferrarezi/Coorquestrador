@@ -1,0 +1,116 @@
+{
+  "name": "coorquestrador",
+  "displayName": "Coorquestrador",
+  "description": "Meta-orquestrador de runtime: planeja demandas, escolhe engines de IA (CLI), estima custo, executa com gates HITL e acompanha multiprojetos.",
+  "version": "0.0.9",
+  "publisher": "coorquestrador",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "coorq.newDemand",
+        "title": "Coorquestrador: Nova tarefa"
+      },
+      {
+        "command": "coorq.probeEngines",
+        "title": "Coorquestrador: Verificar cota dos assistentes"
+      },
+      {
+        "command": "coorq.planDemand",
+        "title": "Coorquestrador: Planejar tarefa"
+      },
+      {
+        "command": "coorq.executeApproved",
+        "title": "Coorquestrador: Revisar e executar tarefa"
+      },
+      {
+        "command": "coorq.showDemands",
+        "title": "Coorquestrador: Minhas tarefas"
+      },
+      {
+        "command": "coorq.manageAgentCore",
+        "title": "Coorquestrador: Nucleo de agentes (trocar/importar)"
+      }
+    ],
+    "views": {
+      "coorq": [
+        {
+          "id": "coorq.chat",
+          "name": "Chat",
+          "type": "webview"
+        },
+        {
+          "id": "coorq.demands",
+          "name": "Tarefas (por projeto)"
+        },
+        {
+          "id": "coorq.engines",
+          "name": "Assistentes"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "coorq",
+          "title": "Coorquestrador",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Coorquestrador",
+      "properties": {
+        "coorq.rootPath": {
+          "type": "string",
+          "default": "",
+          "description": "Raiz multiprojetos. Cada subpasta direta e um projeto."
+        },
+        "coorq.configDir": {
+          "type": "string",
+          "default": ".coorq",
+          "description": "Pasta (relativa a rootPath) com engines.yaml, cost-table.yaml, gates e state."
+        },
+        "coorq.plannerEngine": {
+          "type": "string",
+          "default": "claude-code",
+          "description": "Engine usado para rodar o agente coorquestrador.agent.md (raciocinio de planejamento)."
+        },
+        "coorq.maxParallel": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximo de execucoes simultaneas."
+        },
+        "coorq.requireGate1": {
+          "type": "boolean",
+          "default": true,
+          "description": "Exigir aprovacao HITL de plano+custo antes de qualquer execucao (v1: sempre true)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.41",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  }
+}
