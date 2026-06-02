@@ -6,6 +6,7 @@
 import * as fs from "fs";
 import { spawn } from "child_process";
 import { EngineConfig, EngineSnapshot, Task, Demand } from "./types";
+import { assertValidExecTemplate, sanitizeTemplateValue } from "./commandSecurity";
 
 /** Escapa para uso seguro como argumento unico de shell (aspas simples). */
 function shellQuote(s: string): string {
@@ -58,13 +59,14 @@ export function parsePlan(raw: string): Task[] {
   const last = matches[matches.length - 1][1];
   try {
     const arr = JSON.parse(last);
+    if (!Array.isArray(arr)) return [];
     return (arr as any[]).map((t) => ({
       id: t.id,
       activity: t.activity || "",
       description: t.description || "",
-      size: t.size || "small",
+      size: normalizeTaskSize(t.size) || "small",
       criticality: t.criticality || "normal",
-      dependsOn: t.dependsOn || [],
+      dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn : [],
       acceptance: t.acceptance || "",
       engine: t.engine || undefined,
       model: t.model || undefined,
@@ -76,6 +78,11 @@ export function parsePlan(raw: string): Task[] {
   }
 }
 
+function normalizeTaskSize(size: string | undefined): string | undefined {
+  const aliases: Record<string, string> = { XS: "trivial", S: "small", M: "medium", L: "large", XL: "xlarge" };
+  return size ? aliases[size] || size : undefined;
+}
+
 /** Invoca o agente via CLI do plannerEngine e devolve o texto bruto. */
 export function runPlanner(
   plannerCfg: EngineConfig,
@@ -84,10 +91,12 @@ export function runPlanner(
   timeoutSec: number
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    assertValidExecTemplate(plannerCfg, "planner");
     // usa o exec_template do engine planejador, passando o prompt conforme input_mode
     let command = plannerCfg.exec_template
-      .replace("{model}", plannerCfg.default_model)
+      .replace("{model}", sanitizeTemplateValue(plannerCfg.default_model, "model"))
       .replace("{power}", "high") // planejamento exige raciocinio
+      .replace("{cwd}", shellQuote(cwd))
       .replace("{spec_file}", "")
       .replace("{prompt}", plannerCfg.input_mode === "arg" ? shellQuote("\n" + prompt) : "");
     command = command.replace("{prompt}", "").trim();

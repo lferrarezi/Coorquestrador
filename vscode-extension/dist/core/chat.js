@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildChatPrompt = buildChatPrompt;
 exports.runChat = runChat;
 const child_process_1 = require("child_process");
+const commandSecurity_1 = require("./commandSecurity");
 /** Escapa para uso seguro como argumento unico de shell (aspas simples). */
 function shellQuote(s) {
     return `'${s.replace(/'/g, `'\\''`)}'`;
@@ -20,9 +21,11 @@ function buildChatPrompt(system, history) {
 /** Invoca o engine de chat e faz streaming do stdout. Resolve com o texto completo. */
 function runChat(engineCfg, prompt, cwd, timeoutSec, power, onChunk) {
     return new Promise((resolve, reject) => {
+        (0, commandSecurity_1.assertValidExecTemplate)(engineCfg, "chat");
         let command = engineCfg.exec_template
-            .replace("{model}", engineCfg.default_model)
-            .replace("{power}", power)
+            .replace("{model}", (0, commandSecurity_1.sanitizeTemplateValue)(engineCfg.default_model, "model"))
+            .replace("{power}", (0, commandSecurity_1.sanitizeTemplateValue)(power, "power"))
+            .replace("{cwd}", shellQuote(cwd))
             .replace("{spec_file}", "")
             .replace("{prompt}", engineCfg.input_mode === "arg" ? shellQuote("\n" + prompt) : "");
         command = command.replace("{prompt}", "").trim();

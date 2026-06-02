@@ -47,8 +47,9 @@ const chat_1 = require("../core/chat");
 const prober_1 = require("../core/prober");
 const planner_1 = require("../core/planner");
 const estimator_1 = require("../core/estimator");
-const commandBuilder_1 = require("../core/commandBuilder");
-const executor_1 = require("../core/executor");
+const planValidation_1 = require("../core/planValidation");
+const executionService_1 = require("../core/executionService");
+const gates_1 = require("./gates");
 const SELECTION_KEY = "coorq.chat.selection";
 class ChatPanelProvider {
     constructor(deps) {
@@ -264,35 +265,29 @@ class ChatPanelProvider {
             const plannerCfg = ef.engines[this.selection.engineId || c.plannerEngine] || ef.engines[c.plannerEngine];
             const raw = await (0, planner_1.runPlanner)(plannerCfg, prompt, path.join(c.root, demand.project), ef.defaults.exec_timeout_seconds);
             demand.tasks = (0, planner_1.parsePlan)(raw);
-            if (demand.tasks.length === 0) {
+            const validation = (0, planValidation_1.validatePlan)(demand.tasks, ef, snaps);
+            if (!validation.valid) {
                 demand.status = "nova";
                 store.upsert(demand);
                 this.deps.refreshDemands();
-                this.post({ type: "error", text: "O assistente nao retornou um plano valido. Tente refinar a conversa e criar de novo." });
+                this.post({ type: "error", text: `Plano invalido: ${validation.errors.slice(0, 4).join(" | ")}` });
                 return;
             }
+            validation.warnings.forEach((w) => this.deps.log(`[plan-warning] ${w}`));
+            const quota = (0, estimator_1.estimateDemandQuota)(demand.tasks, cost);
             const est = (0, estimator_1.estimateDemand)(demand.tasks, cost);
-            demand.tasks.forEach((t) => (t.estimatedCost = est.perTask[t.id] || 0));
+            demand.tasks.forEach((t) => {
+                const q = quota.perTask[t.id];
+                t.quotaUnit = q.unit;
+                t.estimatedQuota = q.amount;
+                t.estimatedCost = est.perTask[t.id] || 0;
+            });
+            demand.estimatedQuotaByEngine = quota.byEngine;
             demand.estimatedTotal = est.total;
             demand.status = "aguardando-gate1";
             store.upsert(demand);
             this.deps.refreshDemands();
-            // consumo de cota estimado, por assistente (tokens/ACU) — sem custo financeiro
-            const consMap = new Map();
-            const perTaskCons = {};
-            for (const t of demand.tasks) {
-                if (!t.engine)
-                    continue;
-                const unit = (ef.engines[t.engine]?.unit) || "token";
-                const base = unit === "acu" ? (cost.task_size_acu?.[t.size] ?? 0) : (cost.task_size_tokens?.[t.size] ?? 0);
-                const mult = cost.power_multiplier?.[t.power || "normal"] ?? 1;
-                const amount = base * mult;
-                perTaskCons[t.id] = { unit, amount };
-                const cur = consMap.get(t.engine) || { unit, amount: 0 };
-                cur.amount += amount;
-                consMap.set(t.engine, cur);
-            }
-            const consumption = [...consMap.entries()].map(([engine, v]) => ({ engine, unit: v.unit, amount: v.amount }));
+            const consumption = Object.entries(quota.byEngine).map(([engine, v]) => ({ engine, unit: v.unit, amount: v.amount }));
             this.post({
                 type: "planCard",
                 title: demand.title,
@@ -300,7 +295,7 @@ class ChatPanelProvider {
                 tasks: demand.tasks.map((t) => ({
                     id: t.id, description: t.description, activity: t.activity,
                     engine: t.engine || "(sem assistente)", model: t.model || "", power: t.power || "", size: t.size,
-                    cons: perTaskCons[t.id] || null, blocked: !t.engine,
+                    cons: quota.perTask[t.id] || null, blocked: !t.engine,
                 })),
             });
         }
@@ -327,35 +322,29 @@ class ChatPanelProvider {
         const c = this.deps.cfg();
         const conf = new config_1.CoorqConfig(c.root, c.configDir);
         const ef = conf.loadEngines();
+        const cost = conf.loadCost();
         const store = new demandStore_1.DemandStore(conf.statePath());
         const demand = this.draft;
-        demand.tasks.forEach((t) => { if (t.status === "planejada")
-            t.status = "aprovada"; });
-        demand.status = "em-execucao";
-        store.upsert(demand);
-        this.deps.refreshDemands();
         this.post({ type: "execStart" });
-        const cwd = path.join(c.root, demand.project);
-        const specDir = path.join(c.root, c.configDir, "specs", demand.id);
         try {
-            await (0, executor_1.executePlan)({
-                tasks: demand.tasks, cwd,
-                maxParallel: Math.min(c.maxParallel, ef.defaults.max_parallel),
-                execTimeoutSec: ef.defaults.exec_timeout_seconds,
+            await (0, executionService_1.runDemandExecution)({
+                demand,
+                store,
+                enginesFile: ef,
+                costTable: cost,
+                root: c.root,
+                configDir: c.configDir,
+                maxParallel: c.maxParallel,
                 gate1Approved: true,
-                buildFn: (t) => {
-                    const ecfg = ef.engines[t.engine];
-                    const sdd = `# Tarefa ${t.id}\n${t.description}\n\n## Criterio de aceite\n${t.acceptance}`;
-                    return (0, commandBuilder_1.buildCommand)(t, ecfg, sdd, cwd, specDir);
+                onUpdate: ({ task }) => {
+                    this.deps.refreshDemands();
+                    this.post({ type: "execUpdate", id: task.id, status: task.status, logFile: task.logFile || "" });
                 },
-                onUpdate: (t) => { store.upsert(demand); this.deps.refreshDemands(); this.post({ type: "execUpdate", id: t.id, status: t.status }); },
+                reviewGate2: async ({ task, reasons }) => {
+                    this.post({ type: "gate2", id: task.id, reasons });
+                    return (0, gates_1.gate2Delivery)(task, reasons);
+                },
             });
-            for (const t of demand.tasks.filter((x) => x.status === "revisao")) {
-                t.status = "concluida";
-                t.realCost = t.realCost ?? t.estimatedCost;
-                store.upsert(demand);
-            }
-            store.reconcile(demand.id);
             this.deps.refreshDemands();
             const final = store.get(demand.id);
             const done = final.tasks.filter((t) => t.status === "concluida").length;
@@ -585,7 +574,13 @@ class ChatPanelProvider {
       if(!it){it=el('div','taskItem');it.dataset.id=m.id;const top=el('div','top');top.appendChild(el('span',null,m.id));const bd=el('span','badge');bd.dataset.b='1';top.appendChild(bd);it.appendChild(top);execCard.appendChild(it);}
       const bd=it.querySelector('[data-b]')||it.querySelector('.badge');
       const map={executando:['run','executando'],concluida:['done','concluida'],rejeitada:['fail','rejeitada'],revisao:['','em revisao'],aprovada:['','na fila']};
-      const v=map[m.status]||['',m.status];bd.className='badge '+v[0];bd.textContent=v[1];scroll();
+      const v=map[m.status]||['',m.status];bd.className='badge '+v[0];bd.textContent=v[1];
+      if(m.logFile){let lf=it.querySelector('[data-log]');if(!lf){lf=el('div','sub');lf.dataset.log='1';it.appendChild(lf);}lf.textContent='log: '+m.logFile;}
+      scroll();
+    }
+    else if(m.type==='gate2'){
+      const c=card();c.appendChild(el('h4',null,'Gate 2: '+m.id));
+      c.appendChild(el('div','sub','Revisao necessaria: '+(m.reasons||[]).join(', ')));
     }
     else if(m.type==='summary'){
       const c=card();c.appendChild(el('h4',null,m.status==='concluida'?'✓ Tarefa concluida':'Tarefa: '+m.status));

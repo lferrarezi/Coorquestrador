@@ -55,6 +55,7 @@ class CoorqConfig {
     costPath() { return this.p("cost-table.yaml"); }
     gatesPath() { return this.p("coorq-hitl-gates.yaml"); }
     statePath() { return this.p("state/demands.json"); }
+    logsDir(demandId) { return demandId ? this.p(path.join("logs", demandId)) : this.p("logs"); }
     // ---------- Pacotes de Agentes (nucleo trocavel) ----------
     packsDir() { return this.p("agent-packs"); }
     activePackFile() { return this.p("active-pack"); }

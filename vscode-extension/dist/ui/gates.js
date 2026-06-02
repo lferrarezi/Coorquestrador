@@ -38,22 +38,27 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.gate1PlanCost = gate1PlanCost;
 exports.gate2Delivery = gate2Delivery;
 const vscode = __importStar(require("vscode"));
-function fmt(n) {
-    return n.toFixed(2);
+function fmtQuota(amount, unit) {
+    if (unit === "acu")
+        return `${Math.round(amount * 10) / 10} ACU`;
+    return `${Math.round(amount).toLocaleString("pt-BR")} tokens`;
 }
-/** Gate 1: aprova plano + custo antes de qualquer execucao. Obrigatorio na v1. */
+/** Gate 1: aprova plano + consumo de cota antes de qualquer execucao. Obrigatorio na v1. */
 async function gate1PlanCost(demand) {
-    const lines = demand.tasks.map((t) => `${t.id} [${t.status}] ${t.engine ?? "SEM-ENGINE"} ${t.model ?? ""} ${t.power ?? ""} ~$${fmt(t.estimatedCost || 0)}`);
+    const lines = demand.tasks.map((t) => `${t.id} [${t.status}] ${t.engine ?? "SEM-ENGINE"} ${t.model ?? ""} ${t.power ?? ""} ~${fmtQuota(t.estimatedQuota || 0, t.quotaUnit)}`);
     const blocked = demand.tasks.filter((t) => t.status === "bloqueada");
-    const detail = lines.join("\n") +
-        `\n\nTotal estimado: $${fmt(demand.estimatedTotal || 0)}` +
+    const quota = Object.entries(demand.estimatedQuotaByEngine || {})
+        .map(([engine, q]) => `${engine}: ${fmtQuota(q.amount, q.unit)}`)
+        .join("\n");
+    const detail = `Consumo de cota estimado:\n${quota || "n/d"}\n\n` +
+        lines.join("\n") +
         (blocked.length ? `\n\n${blocked.length} tarefa(s) bloqueada(s) por falta de engine.` : "");
-    const choice = await vscode.window.showWarningMessage(`Gate 1 — Aprovar plano e custo de "${demand.title}"?`, { modal: true, detail }, "Aprovar e executar", "Replanejar");
+    const choice = await vscode.window.showWarningMessage(`Gate 1 — Aprovar plano e cota de "${demand.title}"?`, { modal: true, detail }, "Aprovar e executar", "Replanejar");
     return choice === "Aprovar e executar";
 }
-/** Gate 2: aprova entrega quando ha impacto (custo, prod, dados, commit). */
+/** Gate 2: aprova entrega quando ha impacto (cota, prod, dados, commit). */
 async function gate2Delivery(task, reasons) {
-    const choice = await vscode.window.showWarningMessage(`Gate 2 — Aprovar entrega da tarefa ${task.id}?`, { modal: true, detail: `Motivos do gate: ${reasons.join(", ")}\n\nCusto real: $${(task.realCost || 0).toFixed(2)}` }, "Aprovar entrega", "Rejeitar (retrabalho)");
+    const choice = await vscode.window.showWarningMessage(`Gate 2 — Aprovar entrega da tarefa ${task.id}?`, { modal: true, detail: `Motivos do gate: ${reasons.join(", ")}\n\nCota real: ${fmtQuota(task.realQuota || 0, task.quotaUnit)}` }, "Aprovar entrega", "Rejeitar (retrabalho)");
     return choice === "Aprovar entrega";
 }
 //# sourceMappingURL=gates.js.map

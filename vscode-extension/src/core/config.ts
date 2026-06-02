@@ -12,6 +12,7 @@ export interface CostTable {
   models: Record<string, { unit: "token" | "acu"; price_per_million?: number; price_per_acu?: number }>;
   task_size_tokens: Record<string, number>;
   task_size_acu: Record<string, number>;
+  quota_gate2_threshold?: Partial<Record<"token" | "acu", number>>;
   cost_gate2_threshold: number;
 }
 
@@ -44,6 +45,7 @@ export class CoorqConfig {
   costPath() { return this.p("cost-table.yaml"); }
   gatesPath() { return this.p("coorq-hitl-gates.yaml"); }
   statePath() { return this.p("state/demands.json"); }
+  logsDir(demandId?: string) { return demandId ? this.p(path.join("logs", demandId)) : this.p("logs"); }
 
   // ---------- Pacotes de Agentes (nucleo trocavel) ----------
   packsDir() { return this.p("agent-packs"); }

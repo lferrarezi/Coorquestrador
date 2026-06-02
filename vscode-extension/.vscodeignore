@@ -2,6 +2,12 @@
 src/**
 **/*.ts
 **/*.map
+dist/core/**
+dist/ui/**
 tsconfig.json
-node_modules/.cache/**
+node_modules/**
 .gitignore
+scripts/**
+test/**
+*.vsix
+* 2

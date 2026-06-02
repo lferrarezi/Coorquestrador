@@ -38,6 +38,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildCommand = buildCommand;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+const commandSecurity_1 = require("./commandSecurity");
 /** Escapa um prompt para uso seguro como argumento de shell. */
 function shellQuote(s) {
     return `'${s.replace(/'/g, `'\\''`)}'`;
@@ -51,26 +52,34 @@ function shellQuote(s) {
  * @param specDir onde gravar specs quando input_mode=file
  */
 function buildCommand(task, cfg, sddPrompt, cwd, specDir) {
+    (0, commandSecurity_1.assertValidExecTemplate)(cfg, task.engine || "engine");
     let specFile;
     let promptForTemplate = sddPrompt;
     if (cfg.input_mode === "file") {
         fs.mkdirSync(specDir, { recursive: true });
-        specFile = path.join(specDir, `${task.id}.spec.md`);
+        specFile = (0, commandSecurity_1.ensureInsideDir)(path.join(specDir, `${task.id}.spec.md`), specDir);
         fs.writeFileSync(specFile, sddPrompt, "utf8");
         promptForTemplate = ""; // o template usa {spec_file}
     }
+    const model = (0, commandSecurity_1.sanitizeTemplateValue)(task.model || cfg.default_model, "model");
+    const power = (0, commandSecurity_1.sanitizeTemplateValue)(task.power || "normal", "power");
+    const safeCwd = shellQuote(path.resolve(cwd));
     let command = cfg.exec_template
-        .replace("{model}", task.model || cfg.default_model)
-        .replace("{power}", task.power || "normal")
-        .replace("{cwd}", cwd)
+        .replace("{model}", model)
+        .replace("{power}", power)
+        .replace("{cwd}", safeCwd)
         .replace("{spec_file}", specFile ? shellQuote(specFile) : "")
         .replace("{prompt}", cfg.input_mode === "arg" ? shellQuote(promptForTemplate) : "");
     // input_mode=stdin: o template nao deve consumir {prompt}; mandamos via stdin
     if (cfg.input_mode === "stdin") {
         command = command.replace("{prompt}", "").trim();
     }
+    command = command.trim();
+    const promptArg = cfg.input_mode === "arg" ? shellQuote(promptForTemplate) : "";
+    const redacted = promptArg ? command.replace(promptArg, "'[REDACTED]'") : command;
     return {
-        command: command.trim(),
+        command,
+        redactedCommand: (0, commandSecurity_1.redactCommand)(redacted),
         specFile,
         inputMode: cfg.input_mode,
         stdinPayload: cfg.input_mode === "stdin" ? sddPrompt : undefined,

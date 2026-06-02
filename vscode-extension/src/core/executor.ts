@@ -41,7 +41,7 @@ function runBuilt(taskId: string, built: BuiltCommand, cwd: string, timeoutSec: 
 
 /** Retorna tarefas prontas para rodar: todas as dependencias concluidas. */
 function readyTasks(tasks: Task[]): Task[] {
-  const done = new Set(tasks.filter((t) => t.status === "concluida").map((t) => t.id));
+  const done = new Set(tasks.filter((t) => t.status === "concluida" || t.status === "revisao").map((t) => t.id));
   return tasks.filter(
     (t) =>
       (t.status === "aprovada") &&
@@ -62,10 +62,11 @@ export async function executePlan(opts: {
   execTimeoutSec: number;
   gate1Approved: boolean;
   buildFn: (t: Task) => BuiltCommand;
+  runFn?: (taskId: string, built: BuiltCommand, cwd: string, timeoutSec: number) => Promise<ExecResult>;
   onUpdate: (t: Task) => void;
 }): Promise<ExecResult[]> {
   if (!opts.gate1Approved) {
-    throw new Error("Gate 1 nao aprovado: execucao bloqueada (v1 exige aprovacao de plano+custo).");
+    throw new Error("Gate 1 nao aprovado: execucao bloqueada (v1 exige aprovacao de plano+cota).");
   }
 
   const results: ExecResult[] = [];
@@ -81,8 +82,10 @@ export async function executePlan(opts: {
       opts.onUpdate(t);
       const built = opts.buildFn(t);
       t.command = built.command;
+      t.redactedCommand = built.redactedCommand;
       t.specFile = built.specFile;
-      const p = runBuilt(t.id, built, opts.cwd, opts.execTimeoutSec).then((r) => {
+      const runner = opts.runFn || runBuilt;
+      const p = runner(t.id, built, opts.cwd, opts.execTimeoutSec).then((r) => {
         t.status = r.code === 0 ? "revisao" : "rejeitada";
         t.log = (r.stdout + "\n" + r.stderr).slice(-4000);
         opts.onUpdate(t);

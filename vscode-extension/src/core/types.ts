@@ -56,15 +56,22 @@ export interface Task {
   engine?: string;
   model?: string;
   power?: string;
-  // custo:
+  // consumo de cota:
+  quotaUnit?: "token" | "acu";
+  estimatedQuota?: number;
+  realQuota?: number;
+  // legado/compatibilidade: valores monetarios nao sao o foco do produto.
   estimatedCost?: number;
   realCost?: number;
   // execucao:
   status: TaskStatus;
   command?: string;
+  redactedCommand?: string;
   specFile?: string;
   artifacts?: string[];
   log?: string;
+  logFile?: string;
+  durationMs?: number;
 }
 
 export interface Demand {
@@ -75,6 +82,8 @@ export interface Demand {
   createdAt: string;
   status: "nova" | "planejada" | "aguardando-gate1" | "em-execucao" | "concluida" | "bloqueada";
   tasks: Task[];
+  estimatedQuotaByEngine?: Record<string, { unit: "token" | "acu"; amount: number }>;
+  realQuotaByEngine?: Record<string, { unit: "token" | "acu"; amount: number }>;
   estimatedTotal?: number;
   realTotal?: number;
 }

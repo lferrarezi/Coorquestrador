@@ -5,14 +5,14 @@ version: 1
 
 gates:
 
-  gate1_plan_cost:
+  gate1_plan_quota:
     name: "Aprovacao de Plano e Custo"
     blocking: true            # bloqueia execucao ate aprovacao
     always: true              # sempre dispara, antes de qualquer gasto de credito
     approves:
       - plano de tarefas e DAG
       - matriz de roteamento (engine/modelo/potencia)
-      - custo estimado total e por tarefa
+      - cota estimada total e por tarefa
       - comandos CLI que serao executados
     on_reject: replanejar     # volta para [2] PLANO / [4] ROTEAMENTO
 
@@ -21,7 +21,7 @@ gates:
     blocking: true
     always: false
     triggers:                 # dispara se QUALQUER condicao for verdadeira
-      - custo_real_acima_do_teto       # cost-table.cost_gate2_threshold
+      - cota_real_acima_do_teto        # cost-table.quota_gate2_threshold
       - impacto_em_producao
       - dados_sensiveis
       - decisao_irreversivel
@@ -33,4 +33,4 @@ gates:
 escalation:
   no_engine_available: "Marcar tarefa como bloqueada e escalar no Gate 1 com o motivo do probe."
   credit_below_threshold: "Excluir engine do roteamento e propor alternativa no Gate 1."
-  cost_overrun_runtime: "Pausar execucao e reabrir Gate 1 com novo custo."
+  quota_overrun_runtime: "Pausar execucao e reabrir Gate 1 com nova cota."

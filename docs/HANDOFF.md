@@ -43,9 +43,9 @@ Separação entre DETERMINISMO e RACIOCÍNIO:
   squad não consegue quebrar a capacidade principal.
 
 ## FORMATO ATUAL
-Extensão do VSCode (versão 0.0.12). Repositório:
-github.com/lferrarezi/Coorquestrador (branch main). Roadmap futuro: app solo
-(Electron/CLI) e bot Telegram, reusando `src/core/*`.
+Extensão do VSCode (versão 0.1.0). Repositório:
+github.com/lferrarezi/Coorquestrador (branch main). O escopo atual é exclusivamente
+VS Code; formatos externos foram descartados.
 
 ## ESTRUTURA DO REPOSITÓRIO
 - `agent/coorquestrador.agent.md`  → o cérebro de planejamento (padrão .agent.md).
@@ -76,6 +76,8 @@ Cada subpasta direta da raiz é um "projeto". Em `.coorq/`:
 - `agent-packs/<nome>/`: núcleos (coorquestrador.agent.md + skills/ + agents/ +
   tools/ + pack.json). `active-pack` aponta o ativo.
 - `state/demands.json`: tarefas persistidas.
+- `logs/<demanda>/<tarefa>.log`: stdout/stderr, comando, engine/modelo e duração por
+  tarefa executada.
 
 ## NOMENCLATURA (amigável, voltada ao usuário)
 - "demanda" → Tarefa | "engine" → Assistente | "power" → Esforço
@@ -122,8 +124,10 @@ coorq.maxParallel, coorq.requireGate1.
 ## ESTADO ATUAL / O QUE JÁ FUNCIONA
 - Pipeline validado ponta-a-ponta: planejar (claude) → rotear → executar (criou
   arquivo real). 5 assistentes respondem (claude, codex, devin, gemini, copilot).
-- Build 0.0.12 empacotada e instalável (.vsix).
-- Convenção de versão: cada nova compilação incrementa o patch (0.0.12 → 0.0.13...).
+- Build 0.1.0 empacotada e instalável (.vsix).
+- Convenção de versão: minor impar e trilha pre-release (0.1.x, 0.3.x);
+  minor par e release final (0.2.x, 0.4.x). Correcoes menores incrementam patch
+  dentro da mesma trilha.
 - Repositório versiona dist/ e os .vsix.
 
 ## BUGS JÁ CORRIGIDOS (não reintroduzir)
@@ -138,7 +142,7 @@ coorq.maxParallel, coorq.requireGate1.
 2. credit_probe para claude/gemini/devin (via API com chave, se disponível).
 3. Painel "Minhas tarefas" mais rico (detalhe por tarefa, logs de execução, re-exec).
 4. Gate 2 (entrega) com regras de impacto além de cota.
-5. Empacotar/publicar no Marketplace; depois app solo e bot Telegram.
+5. Melhorar UX e observabilidade dentro da extensão VS Code.
 
 ## COMO RODAR/EMPACOTAR
 ```

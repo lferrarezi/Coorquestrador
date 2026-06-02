@@ -1,8 +1,8 @@
 {
   "name": "coorquestrador",
   "displayName": "Coorquestrador",
-  "description": "Meta-orquestrador de runtime: planeja demandas, escolhe engines de IA (CLI), estima custo, executa com gates HITL e acompanha multiprojetos.",
-  "version": "0.0.12",
+  "description": "Meta-orquestrador de runtime: planeja demandas, escolhe engines de IA (CLI), estima consumo de cota, executa com gates HITL e acompanha multiprojetos.",
+  "version": "0.1.0",
   "publisher": "lferrarezi",
   "author": {
     "name": "Luiz Alberto Abarca Ferrarezi"
@@ -47,10 +47,37 @@
         "title": "Coorquestrador: Minhas tarefas"
       },
       {
+        "command": "coorq.openTaskLog",
+        "title": "Coorquestrador: Abrir log da tarefa"
+      },
+      {
+        "command": "coorq.copyDemandSummary",
+        "title": "Coorquestrador: Copiar resumo da tarefa"
+      },
+      {
         "command": "coorq.manageAgentCore",
         "title": "Coorquestrador: Nucleo de agentes (trocar/importar)"
       }
     ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "coorq.openTaskLog",
+          "when": "view == coorq.demands && viewItem == taskWithLog",
+          "group": "inline@1"
+        },
+        {
+          "command": "coorq.copyDemandSummary",
+          "when": "view == coorq.demands && viewItem == demand",
+          "group": "inline@2"
+        },
+        {
+          "command": "coorq.executeApproved",
+          "when": "view == coorq.demands && viewItem == demand",
+          "group": "inline@3"
+        }
+      ]
+    },
     "views": {
       "coorq": [
         {
@@ -103,7 +130,7 @@
         "coorq.requireGate1": {
           "type": "boolean",
           "default": true,
-          "description": "Exigir aprovacao HITL de plano+custo antes de qualquer execucao (v1: sempre true)."
+          "description": "Exigir aprovacao HITL de plano+cota antes de qualquer execucao (v1: sempre true)."
         }
       }
     }
@@ -111,12 +138,17 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "test": "npm run compile && node test/core.test.js",
+    "bundle": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --minify",
+    "package": "npm run bundle && vsce package",
+    "validate:version": "node scripts/validate-version-policy.js",
+    "release:check": "node scripts/release-check.js"
   },
   "devDependencies": {
     "@types/node": "^20.19.41",
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^3.9.1",
+    "esbuild": "^0.28.0",
     "ovsx": "^1.0.0",
     "typescript": "^5.9.3"
   },

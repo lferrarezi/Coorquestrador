@@ -35,7 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.EnginesProvider = exports.DemandsProvider = void 0;
+exports.EnginesProvider = exports.DemandsProvider = exports.TaskNode = exports.DemandNode = void 0;
 const vscode = __importStar(require("vscode"));
 // Nó de projeto (agrupador) que carrega suas demandas.
 class ProjectNode extends vscode.TreeItem {
@@ -48,6 +48,42 @@ class ProjectNode extends vscode.TreeItem {
         this.description = `${demands.length} demanda(s)`;
     }
 }
+class DemandNode extends vscode.TreeItem {
+    constructor(demand) {
+        super(demand.title, vscode.TreeItemCollapsibleState.Collapsed);
+        this.demand = demand;
+        this.description = `${demand.status} · ${quotaSummary(demand)}`;
+        this.tooltip = `${demand.id}\n${demand.description}`;
+        this.iconPath = new vscode.ThemeIcon(iconForStatus(demand.status));
+        this.contextValue = "demand";
+    }
+}
+exports.DemandNode = DemandNode;
+class TaskNode extends vscode.TreeItem {
+    constructor(demand, task) {
+        super(task.activity || task.description || task.id, vscode.TreeItemCollapsibleState.None);
+        this.demand = demand;
+        this.task = task;
+        this.description = `${task.status} · ${task.engine || "sem assistente"}${task.logFile ? " · log" : ""}`;
+        this.tooltip = [
+            task.id,
+            task.description,
+            `Aceite: ${task.acceptance || "n/d"}`,
+            `Cota: ${task.estimatedQuota != null ? `${Math.round(task.estimatedQuota).toLocaleString("pt-BR")} ${task.quotaUnit || ""}` : "n/d"}`,
+            task.logFile ? `Log: ${task.logFile}` : "",
+        ].filter(Boolean).join("\n");
+        this.iconPath = new vscode.ThemeIcon(iconForTaskStatus(task.status));
+        this.contextValue = task.logFile ? "taskWithLog" : "task";
+        if (task.logFile) {
+            this.command = {
+                command: "coorq.openTaskLog",
+                title: "Abrir log",
+                arguments: [this],
+            };
+        }
+    }
+}
+exports.TaskNode = TaskNode;
 class DemandsProvider {
     constructor(storeFactory) {
         this.storeFactory = storeFactory;
@@ -57,16 +93,12 @@ class DemandsProvider {
     refresh() { this._onDidChange.fire(); }
     getTreeItem(el) { return el; }
     getChildren(el) {
+        if (el instanceof DemandNode) {
+            return el.demand.tasks.map((t) => new TaskNode(el.demand, t));
+        }
         // Nivel 2: demandas de um projeto.
         if (el instanceof ProjectNode) {
-            return el.demands.map((d) => {
-                const item = new vscode.TreeItem(d.title, vscode.TreeItemCollapsibleState.None);
-                item.description = `${d.status} · est $${(d.estimatedTotal || 0).toFixed(2)} / real $${(d.realTotal || 0).toFixed(2)}`;
-                item.tooltip = `${d.id}\n${d.description}`;
-                item.iconPath = new vscode.ThemeIcon(iconForStatus(d.status));
-                item.contextValue = "demand";
-                return item;
-            });
+            return el.demands.map((d) => new DemandNode(d));
         }
         if (el)
             return [];
@@ -99,6 +131,11 @@ class DemandsProvider {
     }
 }
 exports.DemandsProvider = DemandsProvider;
+function quotaSummary(d) {
+    const parts = Object.entries(d.estimatedQuotaByEngine || {})
+        .map(([engine, q]) => `${engine}: ${Math.round(q.amount).toLocaleString("pt-BR")} ${q.unit}`);
+    return parts.length ? parts.join(" · ") : `${d.tasks.length} etapa(s)`;
+}
 function iconForStatus(status) {
     switch (status) {
         case "concluida": return "pass-filled";
@@ -106,6 +143,17 @@ function iconForStatus(status) {
         case "aguardando-gate1": return "shield";
         case "bloqueada": return "error";
         case "planejada": return "checklist";
+        default: return "circle-outline";
+    }
+}
+function iconForTaskStatus(status) {
+    switch (status) {
+        case "concluida": return "pass";
+        case "executando": return "sync";
+        case "revisao": return "eye";
+        case "rejeitada": return "error";
+        case "bloqueada": return "circle-slash";
+        case "aprovada": return "play";
         default: return "circle-outline";
     }
 }

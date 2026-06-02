@@ -6,14 +6,14 @@ import * as fs from "fs";
 import * as path from "path";
 import { CoorqConfig } from "./core/config";
 import { probeAll, eligible } from "./core/prober";
-import { estimateDemand, crossesGate2 } from "./core/estimator";
-import { buildCommand } from "./core/commandBuilder";
-import { executePlan } from "./core/executor";
+import { estimateDemand, estimateDemandQuota } from "./core/estimator";
+import { runDemandExecution } from "./core/executionService";
 import { DemandStore } from "./core/demandStore";
 import { buildPlannerPrompt, parsePlan, runPlanner } from "./core/planner";
+import { validatePlan } from "./core/planValidation";
 import { importPack, readManifest } from "./core/agentPacks";
 import { gate1PlanCost, gate2Delivery } from "./ui/gates";
-import { DemandsProvider, EnginesProvider } from "./ui/trees";
+import { DemandNode, DemandsProvider, EnginesProvider, TaskNode } from "./ui/trees";
 import { ChatPanelProvider } from "./ui/chatPanel";
 import { Demand, Task } from "./core/types";
 
@@ -60,6 +60,34 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider(ChatPanelProvider.viewType, chatProvider),
     vscode.window.registerTreeDataProvider("coorq.demands", demandsProvider),
     vscode.window.registerTreeDataProvider("coorq.engines", enginesProvider)
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("coorq.openTaskLog", async (node?: TaskNode) => {
+      const file = node?.task?.logFile;
+      if (!file) { vscode.window.showInformationMessage("Tarefa sem log persistido."); return; }
+      try {
+        await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false });
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Falha ao abrir log: ${e.message}`);
+      }
+    }),
+    vscode.commands.registerCommand("coorq.copyDemandSummary", async (node?: DemandNode) => {
+      const d = node?.demand;
+      if (!d) { vscode.window.showInformationMessage("Selecione uma tarefa/demanda na arvore."); return; }
+      const quota = Object.entries(d.estimatedQuotaByEngine || {})
+        .map(([engine, q]) => `${engine}: ${Math.round(q.amount).toLocaleString("pt-BR")} ${q.unit}`)
+        .join(" | ") || "cota n/d";
+      const lines = [
+        `${d.id} [${d.project}] ${d.title}`,
+        `status: ${d.status}`,
+        `cota: ${quota}`,
+        "",
+        ...d.tasks.map((t) => `- ${t.id} ${t.status} ${t.engine || "sem-assistente"} ${t.model || ""} ${t.logFile ? `log=${t.logFile}` : ""}`.trim()),
+      ];
+      await vscode.env.clipboard.writeText(lines.join("\n"));
+      vscode.window.showInformationMessage("Resumo copiado.");
+    })
   );
 
   // NUCLEO DE AGENTES (pacotes trocaveis)
@@ -141,7 +169,7 @@ export function activate(context: vscode.ExtensionContext) {
       demandsProvider.refresh();
       out.appendLine(`Nova demanda ${demand.id} - ${title} [${project}] (status: nova)`);
       vscode.window.showInformationMessage(
-        `Demanda ${demand.id} criada. Rode "Planejar demanda" para roteamento e custo.`
+        `Demanda ${demand.id} criada. Rode "Planejar demanda" para roteamento e cota.`
       );
     })
   );
@@ -206,15 +234,33 @@ export function activate(context: vscode.ExtensionContext) {
       const plannerCfg = ef.engines[c.plannerEngine];
       const raw = await runPlanner(plannerCfg, prompt, path.join(c.root, project), ef.defaults.exec_timeout_seconds);
       demand.tasks = parsePlan(raw);
+      const validation = validatePlan(demand.tasks, ef, snaps);
+      if (!validation.valid) {
+        out.appendLine(`Plano invalido para ${demand.id}:`);
+        validation.errors.forEach((e) => out.appendLine(`  - ${e}`));
+        vscode.window.showErrorMessage(`Plano invalido: ${validation.errors.slice(0, 3).join(" | ")}`);
+        return;
+      }
+      validation.warnings.forEach((w) => out.appendLine(`Aviso de plano: ${w}`));
 
+      const quota = estimateDemandQuota(demand.tasks, cost);
       const est = estimateDemand(demand.tasks, cost);
-      demand.tasks.forEach((t) => (t.estimatedCost = est.perTask[t.id] || 0));
+      demand.tasks.forEach((t) => {
+        const q = quota.perTask[t.id];
+        t.quotaUnit = q.unit;
+        t.estimatedQuota = q.amount;
+        t.estimatedCost = est.perTask[t.id] || 0;
+      });
+      demand.estimatedQuotaByEngine = quota.byEngine;
       demand.estimatedTotal = est.total;
       demand.status = "aguardando-gate1";
       store.upsert(demand);
       demandsProvider.refresh();
 
-      out.appendLine(`Plano: ${demand.tasks.length} tarefas. Total estimado $${est.total.toFixed(2)}`);
+      const quotaText = Object.entries(quota.totalByUnit)
+        .map(([unit, amount]) => `${Math.round(amount).toLocaleString("pt-BR")} ${unit}`)
+        .join(" + ");
+      out.appendLine(`Plano: ${demand.tasks.length} tarefas. Cota estimada: ${quotaText || "n/d"}`);
       vscode.window.showInformationMessage(
         `Demanda ${demand.id} planejada. Rode "Executar plano aprovado" para passar pelo Gate 1.`
       );
@@ -233,7 +279,13 @@ export function activate(context: vscode.ExtensionContext) {
       const pending = store.list().filter((d) => d.status === "aguardando-gate1");
       if (pending.length === 0) { vscode.window.showInformationMessage("Nenhuma demanda aguardando Gate 1."); return; }
       const pick = await vscode.window.showQuickPick(
-        pending.map((d) => ({ label: d.title, description: `$${(d.estimatedTotal || 0).toFixed(2)}`, id: d.id })),
+        pending.map((d) => ({
+          label: d.title,
+          description: Object.entries(d.estimatedQuotaByEngine || {})
+            .map(([engine, q]) => `${engine}: ${Math.round(q.amount).toLocaleString("pt-BR")} ${q.unit}`)
+            .join(" · ") || "cota n/d",
+          id: d.id,
+        })),
         { placeHolder: "Demanda para executar" }
       );
       if (!pick) return;
@@ -252,39 +304,25 @@ export function activate(context: vscode.ExtensionContext) {
       demand.status = "em-execucao";
       store.upsert(demand);
 
-      const cwd = path.join(c.root, demand.project);
-      const specDir = path.join(c.root, c.configDir, "specs", demand.id);
-
-      await executePlan({
-        tasks: demand.tasks, cwd,
-        maxParallel: Math.min(c.maxParallel, ef.defaults.max_parallel),
-        execTimeoutSec: ef.defaults.exec_timeout_seconds,
+      await runDemandExecution({
+        demand,
+        store,
+        enginesFile: ef,
+        costTable: cost,
+        root: c.root,
+        configDir: c.configDir,
+        maxParallel: c.maxParallel,
         gate1Approved: approved,
-        buildFn: (t) => {
-          const ecfg = ef.engines[t.engine!];
-          const sdd = `# Tarefa ${t.id}\n${t.description}\n\n## Criterio de aceite\n${t.acceptance}`;
-          const built = buildCommand(t, ecfg, sdd, cwd, specDir);
-          return built;
+        onUpdate: ({ task }) => {
+          demandsProvider.refresh();
+          out.appendLine(`  ${task.id} -> ${task.status}${task.logFile ? ` (${task.logFile})` : ""}`);
         },
-        onUpdate: (t) => { store.upsert(demand); demandsProvider.refresh(); out.appendLine(`  ${t.id} -> ${t.status}`); },
+        reviewGate2: ({ task, reasons }) => gate2Delivery(task, reasons),
       });
 
-      // Revisao + Gate 2 condicional
-      for (const t of demand.tasks.filter((x) => x.status === "revisao")) {
-        const reasons: string[] = [];
-        if (crossesGate2(t.estimatedCost || 0, cost)) reasons.push("custo acima do teto");
-        // hooks futuros: detectar commit/push, prod, dados sensiveis
-        let ok = true;
-        if (reasons.length) ok = await gate2Delivery(t, reasons);
-        t.status = ok ? "concluida" : "rejeitada";
-        t.realCost = t.realCost ?? t.estimatedCost; // sem credit_probe, assume estimado
-        store.upsert(demand);
-      }
-
-      store.reconcile(demand.id);
       demandsProvider.refresh();
       const final = store.get(demand.id)!;
-      out.appendLine(`Concluido ${demand.id}: status=${final.status} custo_real=$${(final.realTotal || 0).toFixed(2)}`);
+      out.appendLine(`Concluido ${demand.id}: status=${final.status}`);
       vscode.window.showInformationMessage(`Demanda ${demand.id} ${final.status}.`);
     })
   );
@@ -298,7 +336,7 @@ export function activate(context: vscode.ExtensionContext) {
       out.show();
       out.appendLine("=== Demandas ===");
       for (const d of store.list())
-        out.appendLine(`${d.id} [${d.project}] ${d.title} - ${d.status} - est $${(d.estimatedTotal||0).toFixed(2)} / real $${(d.realTotal||0).toFixed(2)}`);
+        out.appendLine(`${d.id} [${d.project}] ${d.title} - ${d.status} - cota ${JSON.stringify(d.estimatedQuotaByEngine || {})}`);
     })
   );
 }

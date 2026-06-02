@@ -1,19 +1,19 @@
 # config/cost-table.yaml
-# Tabela de custos por modelo + potencia. Usada pela skill cost-estimation.
-# Precos sao PLACEHOLDERS - ajuste para os valores reais dos seus contratos.
-# unit: token => preco por 1M tokens (input/output medios). unit: acu => preco por ACU.
+# Tabela de consumo de cota por modelo + potencia. Usada pela skill cost-estimation.
+# O foco do Coorquestrador e volume de cota (tokens/ACU), nao custo financeiro.
+# Campos de preco permanecem apenas como compatibilidade legada.
 
 version: 1
 currency: USD
 
-# Multiplicador de potencia: afeta tokens de raciocinio / esforco e, portanto, custo.
+# Multiplicador de potencia: afeta tokens de raciocinio / esforco e, portanto, cota.
 power_multiplier:
   low: 0.5
   normal: 1.0
   medium: 1.8
   high: 3.0
 
-# Preco base por modelo (por 1M tokens, salvo unidade acu).
+# Unidade base por modelo. Precos sao legados/placeholders.
 models:
   opus-4.8:    { unit: token, price_per_million: 18.00 }
   opus-4.7:    { unit: token, price_per_million: 15.00 }
@@ -42,5 +42,10 @@ task_size_acu:
   large:   25
   xlarge:  70
 
-# Teto de custo que dispara o Gate 2 (entrega) automaticamente.
+# Teto de consumo de cota que dispara o Gate 2 (entrega) automaticamente.
+quota_gate2_threshold:
+  token: 1000000
+  acu: 20
+
+# Legado: mantido para estados/configuracoes antigas.
 cost_gate2_threshold: 5.00

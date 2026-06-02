@@ -37,6 +37,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DemandStore = void 0;
 const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
 class DemandStore {
     constructor(file) {
         this.file = file;
@@ -47,7 +48,10 @@ class DemandStore {
         return JSON.parse(fs.readFileSync(this.file, "utf8"));
     }
     save(shape) {
-        fs.writeFileSync(this.file, JSON.stringify(shape, null, 2), "utf8");
+        fs.mkdirSync(path.dirname(this.file), { recursive: true });
+        const tmp = `${this.file}.${process.pid}.${Date.now()}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(shape, null, 2), "utf8");
+        fs.renameSync(tmp, this.file);
     }
     upsert(demand) {
         const shape = this.load();
@@ -73,6 +77,20 @@ class DemandStore {
             return;
         d.estimatedTotal = d.tasks.reduce((s, t) => s + (t.estimatedCost || 0), 0);
         d.realTotal = d.tasks.reduce((s, t) => s + (t.realCost || 0), 0);
+        d.estimatedQuotaByEngine = {};
+        d.realQuotaByEngine = {};
+        for (const t of d.tasks) {
+            if (t.engine && t.quotaUnit && t.estimatedQuota != null) {
+                const cur = d.estimatedQuotaByEngine[t.engine] || { unit: t.quotaUnit, amount: 0 };
+                cur.amount += t.estimatedQuota;
+                d.estimatedQuotaByEngine[t.engine] = cur;
+            }
+            if (t.engine && t.quotaUnit && t.realQuota != null) {
+                const cur = d.realQuotaByEngine[t.engine] || { unit: t.quotaUnit, amount: 0 };
+                cur.amount += t.realQuota;
+                d.realQuotaByEngine[t.engine] = cur;
+            }
+        }
         const allDone = d.tasks.every((t) => t.status === "concluida");
         const anyBlocked = d.tasks.some((t) => t.status === "bloqueada");
         d.status = allDone ? "concluida" : anyBlocked ? "bloqueada" : d.status;

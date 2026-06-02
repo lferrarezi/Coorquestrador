@@ -4,6 +4,7 @@
 
 import { spawn } from "child_process";
 import { EngineConfig } from "./types";
+import { assertValidExecTemplate, sanitizeTemplateValue } from "./commandSecurity";
 
 /** Escapa para uso seguro como argumento unico de shell (aspas simples). */
 function shellQuote(s: string): string {
@@ -30,9 +31,11 @@ export function runChat(
   onChunk: (chunk: string) => void
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    assertValidExecTemplate(engineCfg, "chat");
     let command = engineCfg.exec_template
-      .replace("{model}", engineCfg.default_model)
-      .replace("{power}", power)
+      .replace("{model}", sanitizeTemplateValue(engineCfg.default_model, "model"))
+      .replace("{power}", sanitizeTemplateValue(power, "power"))
+      .replace("{cwd}", shellQuote(cwd))
       .replace("{spec_file}", "")
       .replace("{prompt}", engineCfg.input_mode === "arg" ? shellQuote("\n" + prompt) : "");
     command = command.replace("{prompt}", "").trim();
