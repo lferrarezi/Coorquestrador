@@ -1,0 +1,74 @@
+name: Publish VSCode Extension
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: vscode-extension
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile TypeScript
+        run: npm run compile
+
+      - name: Resolve package version
+        id: package
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          PRERELEASE=$(node -e "const [major, minor] = require('./package.json').version.split('.').map(Number); process.stdout.write(minor % 2 === 1 ? 'true' : 'false')")
+          PRERELEASE_FLAG=$(node -e "const [major, minor] = require('./package.json').version.split('.').map(Number); process.stdout.write(minor % 2 === 1 ? '--pre-release' : '')")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "prerelease_flag=$PRERELEASE_FLAG" >> "$GITHUB_OUTPUT"
+
+      - name: Package VSIX
+        run: npx vsce package ${{ steps.package.outputs.prerelease_flag }} --out "coorquestrador-${{ steps.package.outputs.version }}.vsix"
+
+      - name: Validate VSIX integrity
+        run: |
+          VSIX_FILE="coorquestrador-${{ steps.package.outputs.version }}.vsix"
+          echo "Validating $VSIX_FILE"
+          unzip -t "$VSIX_FILE"
+          echo "VSIX is valid"
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          VSIX_FILE="coorquestrador-${{ steps.package.outputs.version }}.vsix"
+          npx vsce publish ${{ steps.package.outputs.prerelease_flag }} --packagePath "$VSIX_FILE" --pat "$VSCE_PAT"
+
+      - name: Publish to Open VSX Registry
+        env:
+          OVSIX_PAT: ${{ secrets.OVSIX_PAT }}
+        run: |
+          VSIX_FILE="coorquestrador-${{ steps.package.outputs.version }}.vsix"
+          npm exec -- ovsx publish --packagePath "$VSIX_FILE" ${{ steps.package.outputs.prerelease_flag }} --skip-duplicate --pat "$OVSIX_PAT"
+
+      - name: Upload VSIX to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: vscode-extension/coorquestrador-${{ steps.package.outputs.version }}.vsix
+          generate_release_notes: true
+          prerelease: ${{ steps.package.outputs.prerelease }}
+          token: ${{ secrets.GITHUB_TOKEN }}
