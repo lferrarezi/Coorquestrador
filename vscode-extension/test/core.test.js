@@ -11,7 +11,7 @@ const { DemandStore } = require("../dist/core/demandStore");
 const { CoorqConfig } = require("../dist/core/config");
 const { buildCommand } = require("../dist/core/commandBuilder");
 const { ensureInsideDir, redactCommand, redactSecrets, validateExecTemplate } = require("../dist/core/commandSecurity");
-const { discoverInstalledClis } = require("../dist/core/prober");
+const { discoverInstalledClis, resolveBinPath } = require("../dist/core/prober");
 
 function baseEngines() {
   return {
@@ -185,6 +185,14 @@ async function test(name, fn) {
     } finally {
       process.env.PATH = oldPath;
     }
+  });
+
+  await test("resolveBinPath supports Windows PATHEXT lookup", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coorq-winpath-"));
+    const bin = path.join(dir, "fakeai.cmd");
+    fs.writeFileSync(bin, "@echo off\r\necho fakeai\r\n");
+    const resolved = resolveBinPath("fakeai", { PATH: dir, PATHEXT: ".COM;.EXE;.BAT;.CMD" }, "win32");
+    assert.equal(resolved, bin);
   });
 
   await test("ensureProjectDefaults creates .coorq in the open project", () => {

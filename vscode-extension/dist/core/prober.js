@@ -1,15 +1,52 @@
 "use strict";
 // src/core/prober.ts
 // Probe hibrido: a config declara os engines; aqui validamos em runtime.
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.probeEngine = probeEngine;
 exports.probeAll = probeAll;
+exports.resolveBinPath = resolveBinPath;
 exports.discoverModels = discoverModels;
 exports.detectInstalled = detectInstalled;
 exports.discoverInstalledClis = discoverInstalledClis;
 exports.applyCliDiscoveryToEnginesFile = applyCliDiscoveryToEnginesFile;
 exports.eligible = eligible;
 const child_process_1 = require("child_process");
+const fs = __importStar(require("fs"));
+const os = __importStar(require("os"));
+const path = __importStar(require("path"));
 function run(cmd, timeoutSec) {
     return new Promise((resolve) => {
         if (!cmd || !cmd.trim()) {
@@ -132,21 +169,48 @@ const KNOWN_CLIS = [
         fallbackPowers: ["normal"],
     },
 ];
-/** Verifica se o bin de um engine existe no PATH local (command -v). */
-async function whichBin(bin, timeoutSec) {
+function pathEnv(env) {
+    return env.PATH || env.Path || env.path || "";
+}
+function executableExtensions(env, platform = process.platform) {
+    if (platform !== "win32")
+        return [""];
+    const pathext = env.PATHEXT || ".COM;.EXE;.BAT;.CMD;.PS1";
+    return ["", ...pathext.split(";").map((e) => e.trim().toLowerCase()).filter(Boolean)];
+}
+/** Resolve um CLI no PATH sem depender de `command -v`, para funcionar no Windows. */
+function resolveBinPath(bin, env = process.env, platform = process.platform) {
     if (!bin || !bin.trim())
         return "";
-    const r = await run(`command -v ${bin.split(" ")[0]}`, timeoutSec);
-    return r.code === 0 ? r.stdout.trim().split("\n")[0] : "";
+    const exe = bin.trim().split(/\s+/)[0];
+    if (!exe)
+        return "";
+    if (path.isAbsolute(exe) && fs.existsSync(exe))
+        return exe;
+    const dirs = pathEnv(env).split(path.delimiter).filter(Boolean);
+    const exts = executableExtensions(env, platform);
+    const hasExt = path.extname(exe).length > 0;
+    for (const dir of dirs) {
+        const candidates = hasExt ? [path.join(dir, exe)] : exts.map((ext) => path.join(dir, exe + ext));
+        for (const candidate of candidates) {
+            if (fs.existsSync(candidate))
+                return candidate;
+        }
+    }
+    return "";
+}
+/** Verifica se o bin de um engine existe no PATH local. */
+async function whichBin(bin, _timeoutSec) {
+    return resolveBinPath(bin);
 }
 /** Descobre modelos disponiveis de um engine rodando seu models_probe (best-effort). */
 async function discoverModels(cfg, timeoutSec) {
     const mp = cfg.models_probe;
     if (!mp || !mp.command || !mp.command.trim())
-        return [];
+        return discoverModelsFromLocalState(cfg.bin);
     const r = await run(mp.command, timeoutSec);
     if (r.code !== 0 && !r.stdout)
-        return [];
+        return discoverModelsFromLocalState(cfg.bin);
     if (mp.parse === "json") {
         try {
             const obj = JSON.parse(r.stdout);
@@ -154,11 +218,12 @@ async function discoverModels(cfg, timeoutSec) {
             return Array.isArray(at) ? normalizeModelCandidates(at.map(String)) : [];
         }
         catch {
-            return [];
+            return discoverModelsFromLocalState(cfg.bin);
         }
     }
     // parse "lines": uma linha por modelo, dedup, sem vazios.
-    return normalizeModelCandidates(r.stdout.split("\n"));
+    const parsed = normalizeModelCandidates(r.stdout.split("\n"));
+    return parsed.length ? parsed : discoverModelsFromLocalState(cfg.bin);
 }
 function jsonPathArray(obj, expr) {
     if (!expr || !expr.startsWith("$."))
@@ -179,6 +244,70 @@ function normalizeModelCandidates(values) {
             .filter((s) => /^[a-z0-9][a-z0-9._-]*$/i.test(s))
             .filter((s) => !/(prompt|skill|agent|mode|tool)$/i.test(s))
             .filter((s) => !/(prompting|system-prompt|agent-packs)/i.test(s)))];
+}
+function walkFiles(dir, maxFiles = 200) {
+    const out = [];
+    const stack = [dir];
+    while (stack.length && out.length < maxFiles) {
+        const cur = stack.pop();
+        let entries = [];
+        try {
+            entries = fs.readdirSync(cur, { withFileTypes: true });
+        }
+        catch {
+            continue;
+        }
+        for (const entry of entries) {
+            const p = path.join(cur, entry.name);
+            if (entry.isDirectory())
+                stack.push(p);
+            else
+                out.push(p);
+            if (out.length >= maxFiles)
+                break;
+        }
+    }
+    return out;
+}
+function readTextBestEffort(file, maxBytes = 512 * 1024) {
+    try {
+        const stat = fs.statSync(file);
+        if (stat.size > maxBytes * 4)
+            return "";
+        const buf = fs.readFileSync(file);
+        return buf.subarray(0, maxBytes).toString("utf8");
+    }
+    catch {
+        return "";
+    }
+}
+function extractModelsFromFiles(files, pattern) {
+    const found = [];
+    for (const file of files) {
+        const text = readTextBestEffort(file);
+        for (const match of text.matchAll(pattern))
+            found.push(match[0]);
+    }
+    return normalizeModelCandidates(found);
+}
+function discoverModelsFromLocalState(bin) {
+    const home = os.homedir();
+    const normalized = bin.toLowerCase();
+    if (normalized.includes("codex")) {
+        const root = path.join(home, ".codex");
+        const files = [
+            path.join(root, ".codex-global-state.json"),
+            ...walkFiles(path.join(root, "sessions"), 300).filter((f) => f.endsWith(".jsonl") || f.endsWith(".json")),
+        ];
+        return extractModelsFromFiles(files, /gpt-[0-9][a-zA-Z0-9.-]*/g);
+    }
+    if (normalized.includes("gemini")) {
+        return extractModelsFromFiles(walkFiles(path.join(home, ".gemini"), 200), /gemini-[0-9.]+-(?:pro|flash-lite|flash)/g);
+    }
+    if (normalized.includes("copilot")) {
+        return extractModelsFromFiles(walkFiles(path.join(home, ".copilot"), 80), /(?:claude|gpt|gemini)-[a-zA-Z0-9.-]+/g);
+    }
+    return [];
 }
 /** Detecta quais engines declarados tem CLI instalado na maquina local + modelos. */
 async function detectInstalled(enginesFile) {
