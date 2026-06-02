@@ -122,9 +122,9 @@ engines:
       command: ""
       parse: json
       json_path: "$.quota.remaining"
-    exec_template: "gemini -m {model} --approval-mode yolo -p {prompt}"
+    exec_template: "TERM=xterm-256color NO_COLOR=1 gemini -m {model} --approval-mode plan --skip-trust --output-format text -p {prompt}"
     models_probe:
-      command: "grep -rhoE 'gemini-[0-9.]+-(pro|flash-lite|flash)' ~/.gemini 2>/dev/null | sort -u"
+      command: ""
       parse: lines
     models: [gemini-2.5-pro, gemini-2.5-flash]
     default_model: gemini-2.5-pro
@@ -321,7 +321,22 @@ export class CoorqConfig {
     if (!fs.existsSync(this.activePackFile())) this.setActivePack("base");
   }
 
-  loadEngines(): EnginesFile { return readYaml<EnginesFile>(this.enginesPath()); }
+  loadEngines(): EnginesFile {
+    const enginesFile = readYaml<EnginesFile>(this.enginesPath());
+    const gemini = enginesFile.engines?.["gemini-cli"];
+    if (gemini) {
+      if (/gemini\s+-m\s+\{model\}\s+--approval-mode\s+yolo\s+-p\s+\{prompt\}/.test(gemini.exec_template || "")) {
+        gemini.exec_template = "TERM=xterm-256color NO_COLOR=1 gemini -m {model} --approval-mode plan --skip-trust --output-format text -p {prompt}";
+      }
+      if (gemini.models_probe?.command?.includes("~/.gemini")) {
+        gemini.models_probe.command = "";
+      }
+      gemini.models = (gemini.models || []).filter((m) => /^gemini-2\.5-(pro|flash|flash-lite)$/.test(m));
+      if (gemini.models.length === 0) gemini.models = ["gemini-2.5-pro", "gemini-2.5-flash"];
+      if (!gemini.models.includes(gemini.default_model)) gemini.default_model = gemini.models[0];
+    }
+    return enginesFile;
+  }
   loadCost(): CostTable { return readYaml<CostTable>(this.costPath()); }
   loadGates(): any { return readYaml<any>(this.gatesPath()); }
 

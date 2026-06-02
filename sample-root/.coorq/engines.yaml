@@ -118,10 +118,10 @@ engines:
       command: ""
       parse: json
       json_path: "$.quota.remaining"
-    # -p = headless; --approval-mode yolo auto-aprova tools
-    exec_template: "gemini -m {model} --approval-mode yolo -p {prompt}"
+    # -p = headless; plan evita execucao automatica de tools no chat/planejamento
+    exec_template: "TERM=xterm-256color NO_COLOR=1 gemini -m {model} --approval-mode plan --skip-trust --output-format text -p {prompt}"
     models_probe:
-      command: "grep -rhoE 'gemini-[0-9.]+-(pro|flash-lite|flash)' ~/.gemini 2>/dev/null | sort -u"
+      command: ""
       parse: lines
     models: [gemini-2.5-pro, gemini-2.5-flash]   # fallback
     default_model: gemini-2.5-pro

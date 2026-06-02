@@ -152,7 +152,7 @@ const KNOWN_CLIS = [
         id: "gemini-cli",
         bin: "gemini",
         models_probe: {
-            command: "grep -rhoE 'gemini-[0-9.]+-(pro|flash-lite|flash)' ~/.gemini 2>/dev/null | sort -u",
+            command: "",
             parse: "lines",
         },
         fallbackModels: ["gemini-2.5-pro", "gemini-2.5-flash"],
@@ -205,6 +205,8 @@ async function whichBin(bin, _timeoutSec) {
 }
 /** Descobre modelos disponiveis de um engine rodando seu models_probe (best-effort). */
 async function discoverModels(cfg, timeoutSec) {
+    if (cfg.bin.toLowerCase().includes("gemini"))
+        return [];
     const mp = cfg.models_probe;
     if (!mp || !mp.command || !mp.command.trim())
         return discoverModelsFromLocalState(cfg.bin);
@@ -301,9 +303,8 @@ function discoverModelsFromLocalState(bin) {
         ];
         return extractModelsFromFiles(files, /gpt-[0-9][a-zA-Z0-9.-]*/g);
     }
-    if (normalized.includes("gemini")) {
-        return extractModelsFromFiles(walkFiles(path.join(home, ".gemini"), 200), /gemini-[0-9.]+-(?:pro|flash-lite|flash)/g);
-    }
+    if (normalized.includes("gemini"))
+        return [];
     if (normalized.includes("copilot")) {
         return extractModelsFromFiles(walkFiles(path.join(home, ".copilot"), 80), /(?:claude|gpt|gemini)-[a-zA-Z0-9.-]+/g);
     }
@@ -323,7 +324,7 @@ async function detectInstalled(enginesFile) {
         // descoberta automatica: roda models_probe so se instalado; merge com declarados.
         const discovered = installed ? await discoverModels(e, t) : [];
         const models = discovered.length
-            ? [...new Set([...discovered, ...declared])]
+            ? [...new Set([...declared, ...discovered])]
             : declared;
         const default_model = (e.default_model && models.includes(e.default_model)) ? e.default_model : (models[0] ?? "");
         return {
@@ -409,7 +410,7 @@ async function discoverInstalledClis(timeoutSec = 10, enginesFile) {
         const cfg = probeConfigFromKnownCli(cli);
         const discovered = installed ? await discoverModels(cfg, timeoutSec) : [];
         const models = discovered.length
-            ? [...new Set([...discovered, ...(cli.fallbackModels || [])])]
+            ? [...new Set([...(cli.fallbackModels || []), ...discovered])]
             : (cli.fallbackModels || []);
         const powers = cli.fallbackPowers || ["normal"];
         return {

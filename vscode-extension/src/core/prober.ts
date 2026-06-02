@@ -153,7 +153,7 @@ const KNOWN_CLIS: KnownCliDefinition[] = [
     id: "gemini-cli",
     bin: "gemini",
     models_probe: {
-      command: "grep -rhoE 'gemini-[0-9.]+-(pro|flash-lite|flash)' ~/.gemini 2>/dev/null | sort -u",
+      command: "",
       parse: "lines",
     },
     fallbackModels: ["gemini-2.5-pro", "gemini-2.5-flash"],
@@ -210,6 +210,7 @@ async function whichBin(bin: string, _timeoutSec: number): Promise<string> {
 
 /** Descobre modelos disponiveis de um engine rodando seu models_probe (best-effort). */
 export async function discoverModels(cfg: EngineConfig, timeoutSec: number): Promise<string[]> {
+  if (cfg.bin.toLowerCase().includes("gemini")) return [];
   const mp = cfg.models_probe;
   if (!mp || !mp.command || !mp.command.trim()) return discoverModelsFromLocalState(cfg.bin);
   const r = await run(mp.command, timeoutSec);
@@ -289,9 +290,7 @@ function discoverModelsFromLocalState(bin: string): string[] {
     ];
     return extractModelsFromFiles(files, /gpt-[0-9][a-zA-Z0-9.-]*/g);
   }
-  if (normalized.includes("gemini")) {
-    return extractModelsFromFiles(walkFiles(path.join(home, ".gemini"), 200), /gemini-[0-9.]+-(?:pro|flash-lite|flash)/g);
-  }
+  if (normalized.includes("gemini")) return [];
   if (normalized.includes("copilot")) {
     return extractModelsFromFiles(walkFiles(path.join(home, ".copilot"), 80), /(?:claude|gpt|gemini)-[a-zA-Z0-9.-]+/g);
   }
@@ -313,7 +312,7 @@ export async function detectInstalled(enginesFile: EnginesFile): Promise<Install
       // descoberta automatica: roda models_probe so se instalado; merge com declarados.
       const discovered = installed ? await discoverModels(e, t) : [];
       const models = discovered.length
-        ? [...new Set([...discovered, ...declared])]
+        ? [...new Set([...declared, ...discovered])]
         : declared;
       const default_model =
         (e.default_model && models.includes(e.default_model)) ? e.default_model : (models[0] ?? "");
@@ -411,7 +410,7 @@ export async function discoverInstalledClis(
     const cfg = probeConfigFromKnownCli(cli);
     const discovered = installed ? await discoverModels(cfg, timeoutSec) : [];
     const models = discovered.length
-      ? [...new Set([...discovered, ...(cli.fallbackModels || [])])]
+      ? [...new Set([...(cli.fallbackModels || []), ...discovered])]
       : (cli.fallbackModels || []);
     const powers = cli.fallbackPowers || ["normal"];
     return {

@@ -11,7 +11,7 @@ const { DemandStore } = require("../dist/core/demandStore");
 const { CoorqConfig } = require("../dist/core/config");
 const { buildCommand } = require("../dist/core/commandBuilder");
 const { ensureInsideDir, redactCommand, redactSecrets, validateExecTemplate } = require("../dist/core/commandSecurity");
-const { discoverInstalledClis, resolveBinPath } = require("../dist/core/prober");
+const { discoverInstalledClis, discoverModels, resolveBinPath } = require("../dist/core/prober");
 
 function baseEngines() {
   return {
@@ -205,5 +205,29 @@ async function test(name, fn) {
     assert.ok(fs.existsSync(path.join(dir, ".coorq", "agent-packs", "base", "coorquestrador.agent.md")));
     assert.equal(conf.loadEngines().engines.codex.bin, "codex");
     assert.equal(conf.activePack(), "base");
+  });
+
+  await test("loadEngines migrates old Gemini template and filters unavailable models", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coorq-gemini-"));
+    const conf = new CoorqConfig(dir, ".coorq");
+    conf.ensureProjectDefaults();
+    const enginesPath = path.join(dir, ".coorq", "engines.yaml");
+    let raw = fs.readFileSync(enginesPath, "utf8");
+    raw = raw.replace("models: [gemini-2.5-pro, gemini-2.5-flash]", "models: [gemini-3.5-flash, gemini-2.5-pro]");
+    raw = raw.replace("TERM=xterm-256color NO_COLOR=1 gemini -m {model} --approval-mode plan --skip-trust --output-format text -p {prompt}", "gemini -m {model} --approval-mode yolo -p {prompt}");
+    fs.writeFileSync(enginesPath, raw, "utf8");
+
+    const gemini = conf.loadEngines().engines["gemini-cli"];
+    assert.ok(gemini.exec_template.includes("--approval-mode plan"));
+    assert.deepEqual(gemini.models, ["gemini-2.5-pro"]);
+  });
+
+  await test("discoverModels ignores stale Gemini local-state candidates", async () => {
+    const models = await discoverModels({
+      ...baseEngines().engines.codex,
+      bin: "gemini",
+      models_probe: { command: "printf 'gemini-3.5-flash\\n'", parse: "lines" },
+    }, 1);
+    assert.deepEqual(models, []);
   });
 })();
