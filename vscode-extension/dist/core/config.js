@@ -43,6 +43,190 @@ function readYaml(file) {
     const raw = fs.readFileSync(file, "utf8");
     return YAML.parse(raw);
 }
+const DEFAULT_ENGINES_YAML = `version: 1
+
+defaults:
+  min_credit_threshold: 5
+  probe_timeout_seconds: 15
+  exec_timeout_seconds: 1800
+  max_parallel: 3
+
+engines:
+  claude-code:
+    enabled: true
+    location: local
+    host: localhost
+    bin: claude
+    input_mode: stdin
+    probe:
+      command: "claude --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: ""
+      parse: json
+      json_path: "$.credits_remaining"
+    exec_template: "claude -p --model {model} --permission-mode acceptEdits"
+    models: [opus, sonnet, haiku]
+    default_model: sonnet
+    powers: [low, normal, medium, high]
+    model_powers:
+      haiku: [low, normal]
+      sonnet: [low, normal, medium, high]
+      opus: [normal, medium, high]
+    unit: token
+    best_for: [agentic-coding, refactor, multi-file, repo-wide, spec-driven]
+
+  codex:
+    enabled: true
+    location: local
+    host: localhost
+    bin: codex
+    input_mode: arg
+    probe:
+      command: "codex --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: "f=$(ls -t ~/.codex/sessions/*/*/*/*.jsonl 2>/dev/null | head -1); grep -oE '\\"primary\\":\\\\{\\"used_percent\\":[0-9.]+' \\"$f\\" | tail -1 | grep -oE '[0-9.]+$' | awk '{printf \\"%.0f\\", 100-$1}'"
+      parse: text
+    exec_template: "codex exec -m {model} --skip-git-repo-check {prompt}"
+    models_probe:
+      command: "grep -hoE 'gpt-[0-9][a-zA-Z0-9.-]*' ~/.codex/.codex-global-state.json ~/.codex/sessions/*/*/*/*.jsonl 2>/dev/null | sort -u"
+      parse: lines
+    models: [gpt-5.5, gpt-5.4]
+    default_model: gpt-5.5
+    powers: [low, normal, medium, high]
+    unit: token
+    best_for: [agentic-coding, autonomous-tasks, test-generation]
+
+  devin-cli:
+    enabled: true
+    location: local
+    host: localhost
+    bin: devin
+    input_mode: arg
+    probe:
+      command: "devin --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: ""
+      parse: json
+      json_path: "$.acu_remaining"
+    exec_template: "devin --model {model} --permission-mode auto -p {prompt}"
+    models_probe:
+      command: "devin --model x --permission-mode auto -p ping 2>&1 | grep -oE '(claude|gemini|gpt|deepseek|glm|kimi|swe)-[a-z0-9.-]+' | sort -u"
+      parse: lines
+    models: [claude-haiku-4.5, swe-1.6-fast, swe-1.5, gemini-3-flash]
+    default_model: claude-haiku-4.5
+    powers: [normal, high]
+    unit: acu
+    best_for: [long-autonomous, end-to-end-features, background-tasks]
+
+  gemini-cli:
+    enabled: true
+    location: local
+    host: localhost
+    bin: gemini
+    input_mode: arg
+    probe:
+      command: "gemini --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: ""
+      parse: json
+      json_path: "$.quota.remaining"
+    exec_template: "gemini -m {model} --approval-mode yolo -p {prompt}"
+    models_probe:
+      command: "grep -rhoE 'gemini-[0-9.]+-(pro|flash-lite|flash)' ~/.gemini 2>/dev/null | sort -u"
+      parse: lines
+    models: [gemini-2.5-pro, gemini-2.5-flash]
+    default_model: gemini-2.5-pro
+    powers: [low, normal, medium, high]
+    unit: token
+    best_for: [large-context, analysis, docs, fast-cheap-tasks]
+
+  github-copilot-cli:
+    enabled: true
+    location: local
+    host: localhost
+    bin: copilot
+    input_mode: arg
+    probe:
+      command: "copilot --version"
+      expect_exit_code: 0
+    credit_probe:
+      command: "gh api /copilot_internal/user -q .quota_snapshots.chat.percent_remaining 2>/dev/null"
+      parse: text
+    exec_template: "copilot -p {prompt} --model {model} --allow-all-tools --no-color"
+    models_probe:
+      command: "strings ~/.copilot/session-store.db 2>/dev/null | grep -oE '(claude|gpt|gemini)-[a-zA-Z0-9.-]+' | sort -u"
+      parse: lines
+    models: [claude-haiku-4.5, gpt-5.2, claude-sonnet-4.5]
+    default_model: claude-haiku-4.5
+    powers: [normal]
+    unit: token
+    best_for: [inline-edits, small-fixes, command-suggestions]
+`;
+const DEFAULT_COST_YAML = `currency: USD
+power_multiplier:
+  low: 0.5
+  normal: 1
+  medium: 1.8
+  high: 3
+task_size_tokens:
+  trivial: 2000
+  small: 10000
+  medium: 50000
+  large: 200000
+  xlarge: 500000
+task_size_acu:
+  trivial: 0.1
+  small: 0.5
+  medium: 1.5
+  large: 4
+  xlarge: 10
+quota_gate2_threshold:
+  token: 1000000
+  acu: 5
+cost_gate2_threshold: 0
+models: {}
+`;
+const DEFAULT_GATES_YAML = `gate1:
+  require_human_approval: true
+gate2:
+  require_human_approval_on:
+    - failed_task
+    - missing_artifact
+    - quota_exceeded
+`;
+const DEFAULT_AGENT = `---
+name: coorquestrador
+description: Meta-orquestrador de runtime para o projeto aberto no VS Code.
+entrypoint: true
+---
+
+# Coorquestrador
+
+Analise a demanda, quebre em tarefas atomicas, escolha assistente/modelo/esforco disponivel e execute respeitando gates HITL.
+`;
+const DEFAULT_PACK_JSON = `{
+  "name": "base",
+  "version": "1.0.0",
+  "description": "Nucleo base do Coorquestrador para o projeto aberto no VS Code.",
+  "skills": ["demand-planning", "engine-routing", "cost-estimation"],
+  "agents": ["coorquestrador"]
+}
+`;
+const DEFAULT_SKILLS = {
+    "demand-planning": "# Skill: Demand Planning\n\nTransforme a demanda livre em tarefas atomicas com dependencias, tamanho e criterio de aceite verificavel.\n",
+    "engine-routing": "# Skill: Engine Routing\n\nEscolha assistente, modelo e esforco usando somente CLIs detectados, modelos disponiveis e capacidade do snapshot mais recente.\n",
+    "cost-estimation": "# Skill: Cost Estimation\n\nEstime consumo de cota por tarefa usando tamanho, unidade do modelo e multiplicador de esforco.\n",
+};
+function writeIfMissing(file, content) {
+    if (fs.existsSync(file))
+        return;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content, "utf8");
+}
 class CoorqConfig {
     constructor(root, configDir) {
         this.root = root;
@@ -120,6 +304,22 @@ class CoorqConfig {
             }
             this.setActivePack("base");
         }
+    }
+    /** Garante a configuracao padrao do Coorquestrador no projeto aberto. */
+    ensureProjectDefaults() {
+        fs.mkdirSync(path.join(this.root, this.configDir), { recursive: true });
+        writeIfMissing(this.enginesPath(), DEFAULT_ENGINES_YAML);
+        writeIfMissing(this.costPath(), DEFAULT_COST_YAML);
+        writeIfMissing(this.gatesPath(), DEFAULT_GATES_YAML);
+        writeIfMissing(this.statePath(), JSON.stringify({ version: 1, demands: [] }, null, 2));
+        const base = this.packDir("base");
+        writeIfMissing(path.join(base, "coorquestrador.agent.md"), DEFAULT_AGENT);
+        writeIfMissing(path.join(base, "pack.json"), DEFAULT_PACK_JSON);
+        for (const [name, body] of Object.entries(DEFAULT_SKILLS)) {
+            writeIfMissing(path.join(base, "skills", name, "SKILL.md"), body);
+        }
+        if (!fs.existsSync(this.activePackFile()))
+            this.setActivePack("base");
     }
     loadEngines() { return readYaml(this.enginesPath()); }
     loadCost() { return readYaml(this.costPath()); }

@@ -9,7 +9,7 @@ import * as path from "path";
 import { CoorqConfig } from "../core/config";
 import { DemandStore } from "../core/demandStore";
 import { runChat, buildChatPrompt, ChatTurn } from "../core/chat";
-import { discoverInstalledClis, detectInstalled, probeAll } from "../core/prober";
+import { applyCliDiscoveryToEnginesFile, discoverInstalledClis, detectInstalled, probeAll } from "../core/prober";
 import { buildPlannerPrompt, parsePlan, runPlanner } from "../core/planner";
 import { estimateDemand, estimateDemandQuota } from "../core/estimator";
 import { validatePlan } from "../core/planValidation";
@@ -66,7 +66,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case "reset":
           this.history = []; this.draft = null; view.webview.postMessage({ type: "cleared" }); break;
         case "createTask": await this.startCreate(); break;
-        case "projectChosen": await this.createAndPlan(msg.project); break;
+        case "projectChosen": await this.createAndPlan(); break;
         case "approveExecute": await this.execute(); break;
         case "replan": await this.planDraft(); break;
         case "cancelTask":
@@ -76,6 +76,14 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private post(m: any) { this.view?.webview.postMessage(m); }
+
+  private configOrNull(): CoorqConfig | null {
+    const c = this.deps.cfg();
+    if (!c.root) return null;
+    const conf = new CoorqConfig(c.root, c.configDir);
+    conf.ensureProjectDefaults();
+    return conf;
+  }
 
   // ---------- DETECCAO ----------
   private async detect() {
@@ -89,28 +97,14 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         binPath: e.binPath,
         models: e.models,
         default_model: e.models[0] || "",
-        powers: ["normal"],
+        powers: e.powers,
+        modelPowers: e.modelPowers,
         modelsAutoDetected: e.modelsAutoDetected,
       }));
-      this.post({ type: "installed", engines: installed, selection: this.selection, error: installed.length ? undefined : "Configure a pasta-raiz nas configuracoes (coorq.rootPath)." });
+      this.post({ type: "installed", engines: installed, selection: this.selection, error: installed.length ? undefined : "Abra um projeto no VS Code ou configure coorq.rootPath." });
       return;
     }
-    const conf0 = new CoorqConfig(c.root, c.configDir);
-    if (!fs.existsSync(conf0.enginesPath())) {
-      const found = await discoverInstalledClis();
-      const installed = found.filter((e) => e.installed).map((e) => ({
-        id: e.id,
-        bin: e.bin,
-        installed: e.installed,
-        binPath: e.binPath,
-        models: e.models,
-        default_model: e.models[0] || "",
-        powers: ["normal"],
-        modelsAutoDetected: e.modelsAutoDetected,
-      }));
-      this.post({ type: "installed", engines: installed, selection: this.selection, error: installed.length ? undefined : `Configuracao nao encontrada em ${conf0.enginesPath()}. Crie a pasta ${c.configDir}/ na raiz (copie de sample-root/.coorq).` });
-      return;
-    }
+    const conf0 = this.configOrNull() || new CoorqConfig(c.root, c.configDir);
     try {
       const ef = conf0.loadEngines();
       const found = await detectInstalled(ef);
@@ -130,9 +124,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   // ---------- CONVERSA ----------
   private async handleChat(text: string) {
     const c = this.deps.cfg();
-    if (!c.root) { this.post({ type: "error", text: "Configure a pasta-raiz nas configuracoes." }); return; }
+    if (!c.root) { this.post({ type: "error", text: "Abra um projeto no VS Code ou configure coorq.rootPath." }); return; }
     let conf: CoorqConfig, ef: any;
-    try { conf = new CoorqConfig(c.root, c.configDir); ef = conf.loadEngines(); }
+    try {
+      conf = this.configOrNull() || new CoorqConfig(c.root, c.configDir);
+      ef = conf.loadEngines();
+      ef = applyCliDiscoveryToEnginesFile(ef, await discoverInstalledClis(ef.defaults?.probe_timeout_seconds || 10, ef));
+    }
     catch (e: any) { this.post({ type: "error", text: `Falha ao carregar configuracao: ${e.message}` }); return; }
 
     const engineId = this.selection.engineId || c.plannerEngine;
@@ -168,13 +166,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   // ---------- CRIAR TAREFA ----------
   private async startCreate() {
     const c = this.deps.cfg();
-    if (!c.root) { this.post({ type: "error", text: "Configure a pasta-raiz." }); return; }
+    if (!c.root) { this.post({ type: "error", text: "Abra um projeto no VS Code ou configure coorq.rootPath." }); return; }
     if (this.history.length === 0) { this.post({ type: "info", text: "Converse um pouco antes de criar a tarefa." }); return; }
-    const conf = new CoorqConfig(c.root, c.configDir);
-    let projects: string[] = [];
-    try { projects = conf.listProjects(); } catch { /* */ }
-    if (projects.length === 0) { this.post({ type: "error", text: "Nenhum projeto encontrado na raiz. Cada subpasta da raiz e um projeto." }); return; }
-    this.post({ type: "chooseProject", projects });
+    await this.createAndPlan();
   }
 
   private firstUserLine(): string {
@@ -183,20 +177,20 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     return line.length > 60 ? line.slice(0, 57) + "..." : line;
   }
 
-  private async createAndPlan(project: string) {
+  private async createAndPlan() {
     const c = this.deps.cfg();
-    const conf = new CoorqConfig(c.root, c.configDir);
+    const conf = this.configOrNull() || new CoorqConfig(c.root, c.configDir);
     conf.ensureStateFile();
     const store = new DemandStore(conf.statePath());
     const description = this.history.map((t) => `${t.role === "user" ? "Pedido" : "Assistente"}: ${t.content}`).join("\n\n");
     const demand: Demand = {
-      id: `T-${Date.now()}`, project, title: this.firstUserLine(), description,
+      id: `T-${Date.now()}`, project: ".", title: this.firstUserLine(), description,
       createdAt: new Date().toISOString(), status: "nova", tasks: [],
     };
     store.upsert(demand);
     this.draft = demand;
     this.deps.refreshDemands();
-    this.post({ type: "info", text: `Tarefa criada em "${project}": ${demand.title}` });
+    this.post({ type: "info", text: `Tarefa criada no projeto aberto: ${demand.title}` });
     await this.planDraft();
   }
 
@@ -204,8 +198,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private async planDraft() {
     if (!this.draft) { this.post({ type: "error", text: "Nenhuma tarefa em edicao." }); return; }
     const c = this.deps.cfg();
-    const conf = new CoorqConfig(c.root, c.configDir);
-    const ef = conf.loadEngines();
+    const conf = this.configOrNull() || new CoorqConfig(c.root, c.configDir);
+    let ef = conf.loadEngines();
+    ef = applyCliDiscoveryToEnginesFile(ef, await discoverInstalledClis(ef.defaults?.probe_timeout_seconds || 10, ef));
     const cost = conf.loadCost();
     const store = new DemandStore(conf.statePath());
     const demand = this.draft;
@@ -219,10 +214,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       conf.ensureAgentPacks();
       const agentSpec = fs.existsSync(conf.agentPath()) ? fs.readFileSync(conf.agentPath(), "utf8") : "(agente coorquestrador)";
       const skills = conf.loadSkills();
-      const projectCtx = this.projectContext(c.root, demand.project);
+      const projectCtx = this.projectContext(c.root);
       const prompt = buildPlannerPrompt({ agentSpec, skills, demand, projectContext: projectCtx, snapshot: snaps, enginesMeta });
       const plannerCfg = ef.engines[this.selection.engineId || c.plannerEngine] || ef.engines[c.plannerEngine];
-      const raw = await runPlanner(plannerCfg, prompt, path.join(c.root, demand.project), ef.defaults.exec_timeout_seconds);
+      const raw = await runPlanner(plannerCfg, prompt, c.root, ef.defaults.exec_timeout_seconds);
       demand.tasks = parsePlan(raw);
       const validation = validatePlan(demand.tasks, ef, snaps);
       if (!validation.valid) {
@@ -261,8 +256,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private projectContext(root: string, project: string): string {
-    const dir = path.join(root, project);
+  private projectContext(root: string): string {
+    const dir = root;
     const parts: string[] = [];
     for (const f of ["AGENTS.md", "SQUAD.md", ".specify/memory/constitution.md"]) {
       const p = path.join(dir, f);
@@ -275,8 +270,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private async execute() {
     if (!this.draft) { this.post({ type: "error", text: "Nenhuma tarefa para executar." }); return; }
     const c = this.deps.cfg();
-    const conf = new CoorqConfig(c.root, c.configDir);
-    const ef = conf.loadEngines();
+    const conf = this.configOrNull() || new CoorqConfig(c.root, c.configDir);
+    let ef = conf.loadEngines();
+    ef = applyCliDiscoveryToEnginesFile(ef, await discoverInstalledClis(ef.defaults?.probe_timeout_seconds || 10, ef));
     const cost = conf.loadCost();
     const store = new DemandStore(conf.statePath());
     const demand = this.draft;
@@ -461,10 +457,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   function opt(v,l,sel){const o=document.createElement('option');o.value=v;o.textContent=l;if(sel)o.selected=true;return o;}
   function curEngine(){return installed.find(e=>e.id===selEngine.value);}
   function fillModels(s){const e=curEngine();selModel.innerHTML='';(e?e.models:[]).forEach(m=>selModel.appendChild(opt(m,m,m===(s&&s.model))));if(!selModel.value&&e)selModel.value=e.default_model||(e.models[0]||'');}
-  function fillPowers(s){const e=curEngine();selPower.innerHTML='';const ps=(e&&e.powers&&e.powers.length)?e.powers:['low','normal','medium','high'];ps.forEach(p=>selPower.appendChild(opt(p,p,p===((s&&s.power)||'normal'))));}
+  function fillPowers(s){const e=curEngine();selPower.innerHTML='';const byModel=e&&e.modelPowers&&e.modelPowers[selModel.value];const ps=(byModel&&byModel.length)?byModel:((e&&e.powers&&e.powers.length)?e.powers:['normal']);ps.forEach(p=>selPower.appendChild(opt(p,p,p===((s&&s.power)||'normal'))));if(!selPower.value&&ps.length)selPower.value=ps.includes('normal')?'normal':ps[0];}
   function pushSel(){vscode.postMessage({type:'select',engineId:selEngine.value,model:selModel.value,power:selPower.value});}
   selEngine.onchange=()=>{fillModels();fillPowers();pushSel();updateHint();};
-  selModel.onchange=pushSel; selPower.onchange=pushSel;
+  selModel.onchange=()=>{fillPowers();pushSel();updateHint();}; selPower.onchange=pushSel;
   document.getElementById('redetect').onclick=()=>{hint.className='hint';hint.textContent='Re-detectando...';vscode.postMessage({type:'detect'});};
 
   function hideWelcome(){if(welcome)welcome.style.display='none';}

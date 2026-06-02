@@ -71,7 +71,7 @@ export class DemandsProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     // Nivel 1: projetos.
     const store = this.storeFactory();
     if (!store) {
-      const item = new vscode.TreeItem("Configure coorq.rootPath", vscode.TreeItemCollapsibleState.None);
+      const item = new vscode.TreeItem("Abra um projeto ou configure coorq.rootPath", vscode.TreeItemCollapsibleState.None);
       item.iconPath = new vscode.ThemeIcon("warning");
       return [item];
     }

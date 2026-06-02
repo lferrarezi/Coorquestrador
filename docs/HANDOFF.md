@@ -43,7 +43,7 @@ Separação entre DETERMINISMO e RACIOCÍNIO:
   squad não consegue quebrar a capacidade principal.
 
 ## FORMATO ATUAL
-Extensão do VSCode (versão 0.1.1). Repositório:
+Extensão do VSCode (versão 0.1.2). Repositório:
 github.com/lferrarezi/Coorquestrador (branch main). O escopo atual é exclusivamente
 VS Code; formatos externos foram descartados.
 
@@ -52,7 +52,7 @@ VS Code; formatos externos foram descartados.
 - `skills/*/SKILL.md`              → skills base (demand-planning, engine-routing,
                                       cost-estimation).
 - `config/*.yaml`                  → engines, cost-table, gates (referência).
-- `sample-root/.coorq/`            → exemplo do runtime na raiz multiprojetos, com
+- `sample-root/.coorq/`            → exemplo do runtime `.coorq`, com
                                       `agent-packs/base` e `agent-packs/squad-base`.
 - `vscode-extension/`              → a extensão:
     - `src/core/`: config.ts (paths + Agent Packs), prober.ts (probe + detecção de
@@ -61,11 +61,13 @@ VS Code; formatos externos foram descartados.
       (DAG + paralelismo), commandBuilder.ts (monta comando CLI shell-safe),
       demandStore.ts (estado), agentPacks.ts (importar/validar núcleos), chat.ts.
     - `src/ui/`: chatPanel.ts (painel webview = orquestrador conversacional),
-      trees.ts (views Tarefas por projeto e Assistentes), gates.ts (modais HITL).
+      trees.ts (views Tarefas e Assistentes), gates.ts (modais HITL).
     - `src/extension.ts`: ativação, comandos, providers.
 
-## RUNTIME (.coorq na raiz multiprojetos)
-Cada subpasta direta da raiz é um "projeto". Em `.coorq/`:
+## RUNTIME (.coorq no projeto aberto)
+O projeto aberto no VS Code é a referência de trabalho. Na ativação, a extensão
+cria `.coorq/` automaticamente quando ausente, com configuração, estado e núcleo
+de agentes padrão. Em `.coorq/`:
 - `engines.yaml`: declara cada assistente (bin, input_mode arg|stdin|file, probe,
   credit_probe [cota], models_probe [descoberta de modelos], exec_template, models,
   default_model, powers, unit token|acu, best_for, enabled).
@@ -117,14 +119,15 @@ trocar/importar Núcleo de Agentes, 📊 Verificar cota, ☰ Minhas tarefas.
   completa: 229 agentes em grupos 01-22 + 25 skills + 7 handoffs).
 
 ## CONFIGURAÇÕES DA EXTENSÃO
-coorq.rootPath, coorq.configDir (.coorq), coorq.plannerEngine (recomendado
+coorq.rootPath opcional (vazio = workspace aberto), coorq.configDir (.coorq),
+coorq.plannerEngine (recomendado
 claude-code ou codex — gemini falha como planejador com prompts grandes),
 coorq.maxParallel, coorq.requireGate1.
 
 ## ESTADO ATUAL / O QUE JÁ FUNCIONA
 - Pipeline validado ponta-a-ponta: planejar (claude) → rotear → executar (criou
   arquivo real). 5 assistentes respondem (claude, codex, devin, gemini, copilot).
-- Build 0.1.1 empacotada e instalável (.vsix).
+- Build 0.1.2 empacotada e instalável (.vsix).
 - Convenção de versão: minor impar e trilha pre-release (0.1.x, 0.3.x);
   minor par e release final (0.2.x, 0.4.x). Correcoes menores incrementam patch
   dentro da mesma trilha.

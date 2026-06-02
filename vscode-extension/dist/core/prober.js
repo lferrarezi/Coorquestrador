@@ -7,6 +7,7 @@ exports.probeAll = probeAll;
 exports.discoverModels = discoverModels;
 exports.detectInstalled = detectInstalled;
 exports.discoverInstalledClis = discoverInstalledClis;
+exports.applyCliDiscoveryToEnginesFile = applyCliDiscoveryToEnginesFile;
 exports.eligible = eligible;
 const child_process_1 = require("child_process");
 function run(cmd, timeoutSec) {
@@ -88,6 +89,7 @@ const KNOWN_CLIS = [
         id: "claude-code",
         bin: "claude",
         fallbackModels: ["opus", "sonnet", "haiku"],
+        fallbackPowers: ["low", "normal", "medium", "high"],
     },
     {
         id: "codex",
@@ -97,6 +99,7 @@ const KNOWN_CLIS = [
             parse: "lines",
         },
         fallbackModels: ["gpt-5.5", "gpt-5.4"],
+        fallbackPowers: ["low", "normal", "medium", "high"],
     },
     {
         id: "devin-cli",
@@ -106,6 +109,7 @@ const KNOWN_CLIS = [
             parse: "lines",
         },
         fallbackModels: ["claude-haiku-4.5", "swe-1.6-fast", "swe-1.5", "gemini-3-flash"],
+        fallbackPowers: ["normal", "high"],
     },
     {
         id: "gemini-cli",
@@ -115,6 +119,7 @@ const KNOWN_CLIS = [
             parse: "lines",
         },
         fallbackModels: ["gemini-2.5-pro", "gemini-2.5-flash"],
+        fallbackPowers: ["low", "normal", "medium", "high"],
     },
     {
         id: "github-copilot-cli",
@@ -124,6 +129,7 @@ const KNOWN_CLIS = [
             parse: "lines",
         },
         fallbackModels: ["claude-haiku-4.5", "gpt-5.2", "claude-sonnet-4.5"],
+        fallbackPowers: ["normal"],
     },
 ];
 /** Verifica se o bin de um engine existe no PATH local (command -v). */
@@ -199,6 +205,7 @@ async function detectInstalled(enginesFile) {
             models,
             default_model,
             powers: e.powers || ["normal"],
+            modelPowers: buildModelPowers(models, e.powers || ["normal"], e.model_powers),
             modelsAutoDetected: discovered.length > 0,
         };
     }));
@@ -216,7 +223,7 @@ function probeConfigFromKnownCli(cli) {
         exec_template: "",
         models: cli.fallbackModels || [],
         default_model: cli.fallbackModels?.[0] || "",
-        powers: ["normal"],
+        powers: cli.fallbackPowers || ["normal"],
         unit: "token",
         best_for: [],
     };
@@ -231,6 +238,27 @@ function uniqueById(items) {
     }
     return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
+function inferPowersForModel(model, fallback) {
+    const available = fallback.length ? fallback : ["normal"];
+    const lower = model.toLowerCase();
+    let wanted = available;
+    if (/(mini|haiku|flash-lite|fast|lite)/.test(lower))
+        wanted = ["low", "normal"];
+    else if (/(opus|pro|gpt-5\.5|gpt-5\.4|swe-1\.6|sonnet)/.test(lower))
+        wanted = ["normal", "medium", "high"];
+    else if (/(flash|gpt-4o-mini)/.test(lower))
+        wanted = ["low", "normal", "medium"];
+    const filtered = wanted.filter((p) => available.includes(p));
+    return filtered.length ? filtered : available;
+}
+function buildModelPowers(models, fallbackPowers, configured) {
+    const out = {};
+    for (const model of models) {
+        const configuredPowers = configured?.[model];
+        out[model] = configuredPowers?.length ? configuredPowers : inferPowersForModel(model, fallbackPowers);
+    }
+    return out;
+}
 /** Descobre CLIs conhecidos no PATH e tenta listar os modelos disponiveis de cada um. */
 async function discoverInstalledClis(timeoutSec = 10, enginesFile) {
     const configured = enginesFile
@@ -241,6 +269,8 @@ async function discoverInstalledClis(timeoutSec = 10, enginesFile) {
             bin: cfg.bin,
             models_probe: cfg.models_probe,
             fallbackModels: cfg.models || [],
+            fallbackPowers: cfg.powers || ["normal"],
+            fallbackModelPowers: cfg.model_powers,
         }))
         : [];
     const candidates = [...KNOWN_CLIS, ...configured];
@@ -252,18 +282,43 @@ async function discoverInstalledClis(timeoutSec = 10, enginesFile) {
         const models = discovered.length
             ? [...new Set([...discovered, ...(cli.fallbackModels || [])])]
             : (cli.fallbackModels || []);
+        const powers = cli.fallbackPowers || ["normal"];
         return {
             id: cli.id,
             bin: cli.bin,
             installed,
             binPath,
             models,
+            powers,
+            modelPowers: buildModelPowers(models, powers, cli.fallbackModelPowers),
             modelsAutoDetected: discovered.length > 0,
             source: configured.some((c) => c.id === cli.id && c.bin === cli.bin) ? "configured-engine" : "known-cli",
             detail: installed ? undefined : "CLI nao encontrado no PATH",
         };
     }));
     return uniqueById(found);
+}
+/** Aplica o discovery em memoria para menus, prompt do planner e validacao de plano. */
+function applyCliDiscoveryToEnginesFile(enginesFile, discovery) {
+    const byId = new Map(discovery.map((cli) => [cli.id, cli]));
+    const engines = {};
+    for (const [id, cfg] of Object.entries(enginesFile.engines)) {
+        const cli = byId.get(id);
+        if (!cli?.installed) {
+            engines[id] = cfg;
+            continue;
+        }
+        const models = cli.models.length ? cli.models : cfg.models;
+        const powers = cli.powers.length ? cli.powers : cfg.powers;
+        engines[id] = {
+            ...cfg,
+            models,
+            powers,
+            model_powers: Object.keys(cli.modelPowers).length ? cli.modelPowers : cfg.model_powers,
+            default_model: models.includes(cfg.default_model) ? cfg.default_model : (models[0] || cfg.default_model),
+        };
+    }
+    return { ...enginesFile, engines };
 }
 /** Engines elegiveis para roteamento: disponiveis e com credito acima do limite. */
 function eligible(snaps, minThreshold) {

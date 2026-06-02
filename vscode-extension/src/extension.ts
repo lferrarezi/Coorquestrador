@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import { CoorqConfig } from "./core/config";
-import { probeAll, eligible, discoverInstalledClis } from "./core/prober";
+import { applyCliDiscoveryToEnginesFile, probeAll, eligible, discoverInstalledClis } from "./core/prober";
 import { estimateDemand, estimateDemandQuota } from "./core/estimator";
 import { runDemandExecution } from "./core/executionService";
 import { DemandStore } from "./core/demandStore";
@@ -29,14 +29,22 @@ function cfg() {
   };
 }
 
-function projectContext(root: string, project: string): string {
-  const dir = path.join(root, project);
+function projectContext(root: string): string {
+  const dir = root;
   const parts: string[] = [];
   for (const f of ["AGENTS.md", "SQUAD.md", ".specify/memory/constitution.md"]) {
     const p = path.join(dir, f);
     if (fs.existsSync(p)) parts.push(`## ${f}\n` + fs.readFileSync(p, "utf8").slice(0, 4000));
   }
   return parts.join("\n\n");
+}
+
+function ensureWorkspaceConfig() {
+  const c = cfg();
+  if (!c.root) return null;
+  const conf = new CoorqConfig(c.root, c.configDir);
+  conf.ensureProjectDefaults();
+  return conf;
 }
 
 async function discoverAndShowClis(
@@ -47,7 +55,7 @@ async function discoverAndShowClis(
   const c = cfg();
   let confEngines;
   if (c.root) {
-    const conf = new CoorqConfig(c.root, c.configDir);
+    const conf = ensureWorkspaceConfig() || new CoorqConfig(c.root, c.configDir);
     if (fs.existsSync(conf.enginesPath())) {
       try { confEngines = conf.loadEngines(); } catch { /* discovery still works without project config */ }
     }
@@ -96,6 +104,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider("coorq.engines", enginesProvider)
   );
 
+  ensureWorkspaceConfig();
   discoverAndShowClis(out, enginesProvider, context).catch((e: any) => {
     out.appendLine(`Falha no discovery inicial de CLIs: ${e.message}`);
   });
@@ -133,7 +142,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("coorq.manageAgentCore", async () => {
       const c = cfg();
       if (!c.root) { vscode.window.showErrorMessage("Configure coorq.rootPath primeiro."); return; }
-      const conf = new CoorqConfig(c.root, c.configDir);
+      const conf = ensureWorkspaceConfig() || new CoorqConfig(c.root, c.configDir);
       conf.ensureAgentPacks();
       const active = conf.activePack();
       const packs = conf.listPacks();
@@ -186,12 +195,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("coorq.newDemand", async () => {
       const c = cfg();
       if (!c.root) { vscode.window.showErrorMessage("Configure coorq.rootPath primeiro."); return; }
-      const conf = new CoorqConfig(c.root, c.configDir);
+      const conf = ensureWorkspaceConfig() || new CoorqConfig(c.root, c.configDir);
       conf.ensureStateFile();
       const store = new DemandStore(conf.statePath());
 
-      const project = await vscode.window.showQuickPick(conf.listProjects(), { placeHolder: "Projeto-alvo" });
-      if (!project) return;
       const title = await vscode.window.showInputBox({ prompt: "Titulo da demanda" });
       if (!title) return;
       const description = await vscode.window.showInputBox({ prompt: "Descreva a demanda" });
@@ -199,13 +206,13 @@ export function activate(context: vscode.ExtensionContext) {
 
       const demand: Demand = {
         id: `D-${Date.now()}`,
-        project, title, description,
+        project: ".", title, description,
         createdAt: new Date().toISOString(),
         status: "nova", tasks: [],
       };
       store.upsert(demand);
       demandsProvider.refresh();
-      out.appendLine(`Nova demanda ${demand.id} - ${title} [${project}] (status: nova)`);
+      out.appendLine(`Nova demanda ${demand.id} - ${title} [projeto aberto] (status: nova)`);
       vscode.window.showInformationMessage(
         `Demanda ${demand.id} criada. Rode "Planejar demanda" para roteamento e cota.`
       );
@@ -227,10 +234,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("coorq.probeEngines", async () => {
       const c = cfg();
-      const conf = new CoorqConfig(c.root, c.configDir);
-      const ef = conf.loadEngines();
+      const conf = ensureWorkspaceConfig() || new CoorqConfig(c.root, c.configDir);
+      let ef = conf.loadEngines();
       out.show();
       const discovered = await discoverAndShowClis(out, enginesProvider, context);
+      ef = applyCliDiscoveryToEnginesFile(ef, discovered);
       out.appendLine(`CLIs instalados: ${discovered.filter((cli) => cli.installed).map((cli) => cli.id).join(", ") || "(nenhum)"}`);
       out.appendLine("Probing engines...");
       const snaps = await probeAll(ef);
@@ -247,14 +255,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("coorq.planDemand", async () => {
       const c = cfg();
-      const conf = new CoorqConfig(c.root, c.configDir);
+      const conf = ensureWorkspaceConfig() || new CoorqConfig(c.root, c.configDir);
       conf.ensureStateFile();
-      const ef = conf.loadEngines();
+      let ef = conf.loadEngines();
       const cost = conf.loadCost();
       const store = new DemandStore(conf.statePath());
 
-      const project = await vscode.window.showQuickPick(conf.listProjects(), { placeHolder: "Projeto-alvo" });
-      if (!project) return;
       const title = await vscode.window.showInputBox({ prompt: "Titulo da demanda" });
       if (!title) return;
       const description = await vscode.window.showInputBox({ prompt: "Descreva a demanda" });
@@ -262,13 +268,15 @@ export function activate(context: vscode.ExtensionContext) {
 
       const demand: Demand = {
         id: `D-${Date.now()}`,
-        project, title, description,
+        project: ".", title, description,
         createdAt: new Date().toISOString(),
         status: "nova", tasks: [],
       };
 
       out.show();
       out.appendLine(`Planejando ${demand.id} - ${title}`);
+      const discovered = await discoverInstalledClis(ef.defaults.probe_timeout_seconds, ef);
+      ef = applyCliDiscoveryToEnginesFile(ef, discovered);
       const snaps = await probeAll(ef);
       const enginesMeta: any = {};
       for (const [id, e] of Object.entries(ef.engines))
@@ -278,12 +286,12 @@ export function activate(context: vscode.ExtensionContext) {
       const agentSpec = fs.existsSync(conf.agentPath()) ? fs.readFileSync(conf.agentPath(), "utf8") : "(agente coorquestrador)";
       const prompt = buildPlannerPrompt({
         agentSpec, skills: conf.loadSkills(), demand,
-        projectContext: projectContext(c.root, project),
+        projectContext: projectContext(c.root),
         snapshot: snaps, enginesMeta,
       });
 
       const plannerCfg = ef.engines[c.plannerEngine];
-      const raw = await runPlanner(plannerCfg, prompt, path.join(c.root, project), ef.defaults.exec_timeout_seconds);
+      const raw = await runPlanner(plannerCfg, prompt, c.root, ef.defaults.exec_timeout_seconds);
       demand.tasks = parsePlan(raw);
       const validation = validatePlan(demand.tasks, ef, snaps);
       if (!validation.valid) {
@@ -322,8 +330,9 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("coorq.executeApproved", async () => {
       const c = cfg();
-      const conf = new CoorqConfig(c.root, c.configDir);
-      const ef = conf.loadEngines();
+      const conf = ensureWorkspaceConfig() || new CoorqConfig(c.root, c.configDir);
+      let ef = conf.loadEngines();
+      ef = applyCliDiscoveryToEnginesFile(ef, await discoverInstalledClis(ef.defaults.probe_timeout_seconds, ef));
       const cost = conf.loadCost();
       const store = new DemandStore(conf.statePath());
 

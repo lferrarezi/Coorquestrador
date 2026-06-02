@@ -108,19 +108,15 @@ O workflow de publicação marca automaticamente como pre-release quando o minor
 
 3. **Rodar em modo dev**: abra a pasta `vscode-extension` no VSCode e pressione `F5` (Extension Development Host). Para validar release local: `npm run release:check`. Para empacotar um `.vsix`: `npm run package`.
 
-4. **Preparar a raiz multiprojetos**: crie uma pasta raiz onde cada subpasta direta é um projeto. Dentro dela, crie `.coorq/` copiando o conteúdo de `sample-root/.coorq/` (engines, cost-table, gates, agent, state).
-   ```bash
-   mkdir -p /caminho/raiz/.coorq
-   cp -r sample-root/.coorq/* /caminho/raiz/.coorq/
-   ```
+4. **Abrir o projeto no VS Code**: o projeto aberto é a referência de trabalho. Na ativação, a extensão cria `.coorq/` automaticamente quando a pasta ainda não existe, incluindo `engines.yaml`, `cost-table.yaml`, gates, estado e o núcleo de agentes padrão.
 
 5. **Configurar a extensão** (Settings → Coorquestrador):
-   - `coorq.rootPath`: caminho da raiz multiprojetos.
+   - `coorq.rootPath`: opcional; quando vazio, usa o workspace aberto no VS Code.
    - `coorq.plannerEngine`: engine que roda o agente planejador (padrão `claude-code`).
    - `coorq.maxParallel`: execuções simultâneas (padrão 3).
    - `coorq.requireGate1`: mantenha `true` na v1.
 
-6. **Ajustar os engines reais**: edite `.coorq/engines.yaml`:
+6. **Ajustar os engines reais quando necessário**: a extensão faz discovery dos CLIs instalados e dos modelos disponíveis para alimentar os menus Assistente/Modelo/Esforço. Edite `.coorq/engines.yaml` apenas para customizar comandos, probes ou roteamento:
    - Confirme o `bin`, `input_mode` e `exec_template` de cada CLI conforme a sintaxe real.
    - Preencha `credit_probe.command` com o comando de saldo/cota de cada engine (ex.: `devin acu --json`). Onde não houver, a cota real cai para a estimada.
    - Ajuste `cost-table.yaml` com os volumes de cota calibrados para seu uso.

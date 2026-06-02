@@ -8,6 +8,7 @@ const { validatePlan } = require("../dist/core/planValidation");
 const { estimateDemandQuota } = require("../dist/core/estimator");
 const { executePlan } = require("../dist/core/executor");
 const { DemandStore } = require("../dist/core/demandStore");
+const { CoorqConfig } = require("../dist/core/config");
 const { buildCommand } = require("../dist/core/commandBuilder");
 const { ensureInsideDir, redactCommand, redactSecrets, validateExecTemplate } = require("../dist/core/commandSecurity");
 const { discoverInstalledClis } = require("../dist/core/prober");
@@ -180,8 +181,21 @@ async function test(name, fn) {
       assert.equal(fake.installed, true);
       assert.equal(fake.binPath, bin);
       assert.deepEqual(fake.models, ["fake-model-a", "fake-model-b"]);
+      assert.deepEqual(fake.modelPowers["fake-model-a"], ["normal", "high"]);
     } finally {
       process.env.PATH = oldPath;
     }
+  });
+
+  await test("ensureProjectDefaults creates .coorq in the open project", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coorq-project-"));
+    const conf = new CoorqConfig(dir, ".coorq");
+    conf.ensureProjectDefaults();
+    assert.ok(fs.existsSync(path.join(dir, ".coorq", "engines.yaml")));
+    assert.ok(fs.existsSync(path.join(dir, ".coorq", "cost-table.yaml")));
+    assert.ok(fs.existsSync(path.join(dir, ".coorq", "coorq-hitl-gates.yaml")));
+    assert.ok(fs.existsSync(path.join(dir, ".coorq", "agent-packs", "base", "coorquestrador.agent.md")));
+    assert.equal(conf.loadEngines().engines.codex.bin, "codex");
+    assert.equal(conf.activePack(), "base");
   });
 })();

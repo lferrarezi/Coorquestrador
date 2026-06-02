@@ -98,7 +98,7 @@ class ChatPanelProvider {
                     await this.startCreate();
                     break;
                 case "projectChosen":
-                    await this.createAndPlan(msg.project);
+                    await this.createAndPlan();
                     break;
                 case "approveExecute":
                     await this.execute();
@@ -114,6 +114,14 @@ class ChatPanelProvider {
         });
     }
     post(m) { this.view?.webview.postMessage(m); }
+    configOrNull() {
+        const c = this.deps.cfg();
+        if (!c.root)
+            return null;
+        const conf = new config_1.CoorqConfig(c.root, c.configDir);
+        conf.ensureProjectDefaults();
+        return conf;
+    }
     // ---------- DETECCAO ----------
     async detect() {
         const c = this.deps.cfg();
@@ -126,28 +134,14 @@ class ChatPanelProvider {
                 binPath: e.binPath,
                 models: e.models,
                 default_model: e.models[0] || "",
-                powers: ["normal"],
+                powers: e.powers,
+                modelPowers: e.modelPowers,
                 modelsAutoDetected: e.modelsAutoDetected,
             }));
-            this.post({ type: "installed", engines: installed, selection: this.selection, error: installed.length ? undefined : "Configure a pasta-raiz nas configuracoes (coorq.rootPath)." });
+            this.post({ type: "installed", engines: installed, selection: this.selection, error: installed.length ? undefined : "Abra um projeto no VS Code ou configure coorq.rootPath." });
             return;
         }
-        const conf0 = new config_1.CoorqConfig(c.root, c.configDir);
-        if (!fs.existsSync(conf0.enginesPath())) {
-            const found = await (0, prober_1.discoverInstalledClis)();
-            const installed = found.filter((e) => e.installed).map((e) => ({
-                id: e.id,
-                bin: e.bin,
-                installed: e.installed,
-                binPath: e.binPath,
-                models: e.models,
-                default_model: e.models[0] || "",
-                powers: ["normal"],
-                modelsAutoDetected: e.modelsAutoDetected,
-            }));
-            this.post({ type: "installed", engines: installed, selection: this.selection, error: installed.length ? undefined : `Configuracao nao encontrada em ${conf0.enginesPath()}. Crie a pasta ${c.configDir}/ na raiz (copie de sample-root/.coorq).` });
-            return;
-        }
+        const conf0 = this.configOrNull() || new config_1.CoorqConfig(c.root, c.configDir);
         try {
             const ef = conf0.loadEngines();
             const found = await (0, prober_1.detectInstalled)(ef);
@@ -175,13 +169,14 @@ class ChatPanelProvider {
     async handleChat(text) {
         const c = this.deps.cfg();
         if (!c.root) {
-            this.post({ type: "error", text: "Configure a pasta-raiz nas configuracoes." });
+            this.post({ type: "error", text: "Abra um projeto no VS Code ou configure coorq.rootPath." });
             return;
         }
         let conf, ef;
         try {
-            conf = new config_1.CoorqConfig(c.root, c.configDir);
+            conf = this.configOrNull() || new config_1.CoorqConfig(c.root, c.configDir);
             ef = conf.loadEngines();
+            ef = (0, prober_1.applyCliDiscoveryToEnginesFile)(ef, await (0, prober_1.discoverInstalledClis)(ef.defaults?.probe_timeout_seconds || 10, ef));
         }
         catch (e) {
             this.post({ type: "error", text: `Falha ao carregar configuracao: ${e.message}` });
@@ -221,44 +216,34 @@ class ChatPanelProvider {
     async startCreate() {
         const c = this.deps.cfg();
         if (!c.root) {
-            this.post({ type: "error", text: "Configure a pasta-raiz." });
+            this.post({ type: "error", text: "Abra um projeto no VS Code ou configure coorq.rootPath." });
             return;
         }
         if (this.history.length === 0) {
             this.post({ type: "info", text: "Converse um pouco antes de criar a tarefa." });
             return;
         }
-        const conf = new config_1.CoorqConfig(c.root, c.configDir);
-        let projects = [];
-        try {
-            projects = conf.listProjects();
-        }
-        catch { /* */ }
-        if (projects.length === 0) {
-            this.post({ type: "error", text: "Nenhum projeto encontrado na raiz. Cada subpasta da raiz e um projeto." });
-            return;
-        }
-        this.post({ type: "chooseProject", projects });
+        await this.createAndPlan();
     }
     firstUserLine() {
         const u = this.history.find((t) => t.role === "user");
         const line = (u?.content || "Nova tarefa").split("\n")[0];
         return line.length > 60 ? line.slice(0, 57) + "..." : line;
     }
-    async createAndPlan(project) {
+    async createAndPlan() {
         const c = this.deps.cfg();
-        const conf = new config_1.CoorqConfig(c.root, c.configDir);
+        const conf = this.configOrNull() || new config_1.CoorqConfig(c.root, c.configDir);
         conf.ensureStateFile();
         const store = new demandStore_1.DemandStore(conf.statePath());
         const description = this.history.map((t) => `${t.role === "user" ? "Pedido" : "Assistente"}: ${t.content}`).join("\n\n");
         const demand = {
-            id: `T-${Date.now()}`, project, title: this.firstUserLine(), description,
+            id: `T-${Date.now()}`, project: ".", title: this.firstUserLine(), description,
             createdAt: new Date().toISOString(), status: "nova", tasks: [],
         };
         store.upsert(demand);
         this.draft = demand;
         this.deps.refreshDemands();
-        this.post({ type: "info", text: `Tarefa criada em "${project}": ${demand.title}` });
+        this.post({ type: "info", text: `Tarefa criada no projeto aberto: ${demand.title}` });
         await this.planDraft();
     }
     // ---------- PLANEJAR ----------
@@ -268,8 +253,9 @@ class ChatPanelProvider {
             return;
         }
         const c = this.deps.cfg();
-        const conf = new config_1.CoorqConfig(c.root, c.configDir);
-        const ef = conf.loadEngines();
+        const conf = this.configOrNull() || new config_1.CoorqConfig(c.root, c.configDir);
+        let ef = conf.loadEngines();
+        ef = (0, prober_1.applyCliDiscoveryToEnginesFile)(ef, await (0, prober_1.discoverInstalledClis)(ef.defaults?.probe_timeout_seconds || 10, ef));
         const cost = conf.loadCost();
         const store = new demandStore_1.DemandStore(conf.statePath());
         const demand = this.draft;
@@ -282,10 +268,10 @@ class ChatPanelProvider {
             conf.ensureAgentPacks();
             const agentSpec = fs.existsSync(conf.agentPath()) ? fs.readFileSync(conf.agentPath(), "utf8") : "(agente coorquestrador)";
             const skills = conf.loadSkills();
-            const projectCtx = this.projectContext(c.root, demand.project);
+            const projectCtx = this.projectContext(c.root);
             const prompt = (0, planner_1.buildPlannerPrompt)({ agentSpec, skills, demand, projectContext: projectCtx, snapshot: snaps, enginesMeta });
             const plannerCfg = ef.engines[this.selection.engineId || c.plannerEngine] || ef.engines[c.plannerEngine];
-            const raw = await (0, planner_1.runPlanner)(plannerCfg, prompt, path.join(c.root, demand.project), ef.defaults.exec_timeout_seconds);
+            const raw = await (0, planner_1.runPlanner)(plannerCfg, prompt, c.root, ef.defaults.exec_timeout_seconds);
             demand.tasks = (0, planner_1.parsePlan)(raw);
             const validation = (0, planValidation_1.validatePlan)(demand.tasks, ef, snaps);
             if (!validation.valid) {
@@ -325,8 +311,8 @@ class ChatPanelProvider {
             this.post({ type: "error", text: `Falha ao planejar: ${e.message}` });
         }
     }
-    projectContext(root, project) {
-        const dir = path.join(root, project);
+    projectContext(root) {
+        const dir = root;
         const parts = [];
         for (const f of ["AGENTS.md", "SQUAD.md", ".specify/memory/constitution.md"]) {
             const p = path.join(dir, f);
@@ -342,8 +328,9 @@ class ChatPanelProvider {
             return;
         }
         const c = this.deps.cfg();
-        const conf = new config_1.CoorqConfig(c.root, c.configDir);
-        const ef = conf.loadEngines();
+        const conf = this.configOrNull() || new config_1.CoorqConfig(c.root, c.configDir);
+        let ef = conf.loadEngines();
+        ef = (0, prober_1.applyCliDiscoveryToEnginesFile)(ef, await (0, prober_1.discoverInstalledClis)(ef.defaults?.probe_timeout_seconds || 10, ef));
         const cost = conf.loadCost();
         const store = new demandStore_1.DemandStore(conf.statePath());
         const demand = this.draft;
@@ -526,10 +513,10 @@ class ChatPanelProvider {
   function opt(v,l,sel){const o=document.createElement('option');o.value=v;o.textContent=l;if(sel)o.selected=true;return o;}
   function curEngine(){return installed.find(e=>e.id===selEngine.value);}
   function fillModels(s){const e=curEngine();selModel.innerHTML='';(e?e.models:[]).forEach(m=>selModel.appendChild(opt(m,m,m===(s&&s.model))));if(!selModel.value&&e)selModel.value=e.default_model||(e.models[0]||'');}
-  function fillPowers(s){const e=curEngine();selPower.innerHTML='';const ps=(e&&e.powers&&e.powers.length)?e.powers:['low','normal','medium','high'];ps.forEach(p=>selPower.appendChild(opt(p,p,p===((s&&s.power)||'normal'))));}
+  function fillPowers(s){const e=curEngine();selPower.innerHTML='';const byModel=e&&e.modelPowers&&e.modelPowers[selModel.value];const ps=(byModel&&byModel.length)?byModel:((e&&e.powers&&e.powers.length)?e.powers:['normal']);ps.forEach(p=>selPower.appendChild(opt(p,p,p===((s&&s.power)||'normal'))));if(!selPower.value&&ps.length)selPower.value=ps.includes('normal')?'normal':ps[0];}
   function pushSel(){vscode.postMessage({type:'select',engineId:selEngine.value,model:selModel.value,power:selPower.value});}
   selEngine.onchange=()=>{fillModels();fillPowers();pushSel();updateHint();};
-  selModel.onchange=pushSel; selPower.onchange=pushSel;
+  selModel.onchange=()=>{fillPowers();pushSel();updateHint();}; selPower.onchange=pushSel;
   document.getElementById('redetect').onclick=()=>{hint.className='hint';hint.textContent='Re-detectando...';vscode.postMessage({type:'detect'});};
 
   function hideWelcome(){if(welcome)welcome.style.display='none';}

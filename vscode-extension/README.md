@@ -1,7 +1,7 @@
 # Coorquestrador (VSCode)
 
 Meta-orquestrador de runtime: planeja demandas, escolhe engines de IA (CLI),
-estima consumo de cota, executa com gates HITL e acompanha multiprojetos.
+estima consumo de cota, executa com gates HITL e acompanha o projeto aberto no VS Code.
 
 Veja o README da raiz do projeto para arquitetura, instalação e uso.
 
@@ -15,7 +15,7 @@ Veja o README da raiz do projeto para arquitetura, instalação e uso.
 Logs de execução são gravados em `.coorq/logs/<demanda>/<tarefa>.log`.
 A view **Tarefas (por projeto)** expande demandas em etapas; tarefas com log podem ser abertas diretamente pelo menu de contexto ou clique no item.
 
-> Build de teste **0.1.1**.
+> Build de teste **0.1.2**.
 
 ## Versionamento
 

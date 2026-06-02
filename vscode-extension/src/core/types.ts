@@ -21,6 +21,7 @@ export interface EngineConfig {
   models: string[];
   default_model: string;
   powers: string[];
+  model_powers?: Record<string, string[]>;
   unit: "token" | "acu";
   best_for: string[];
 }
@@ -76,7 +77,7 @@ export interface Task {
 
 export interface Demand {
   id: string;
-  project: string;        // subpasta da raiz multiprojetos
+  project: string;        // "." para o projeto aberto no VS Code
   title: string;
   description: string;
   createdAt: string;
