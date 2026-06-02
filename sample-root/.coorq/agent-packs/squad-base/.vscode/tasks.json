@@ -1,0 +1,17 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "List AI Squad agents",
+      "type": "shell",
+      "command": "bash scripts/list_agents.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "Validate AI Squad package",
+      "type": "shell",
+      "command": "bash scripts/validate_package.sh",
+      "problemMatcher": []
+    }
+  ]
+}

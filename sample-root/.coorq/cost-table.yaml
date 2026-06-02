@@ -28,19 +28,33 @@ models:
 # Heuristica de estimativa de tamanho por classe de tarefa (tokens estimados de I/O).
 # A skill demand-planning classifica cada tarefa em uma destas classes.
 task_size_tokens:
-  trivial:     8000      # rename, fix de uma linha, ajuste de config
-  small:       30000     # funcao isolada, teste unitario, doc curto
-  medium:      120000    # feature pequena multi-arquivo
-  large:       400000    # feature completa, refactor amplo
-  xlarge:      1200000   # modulo inteiro, migracao
+  # Calibrado para uso AGENTICO real (inclui loops de tool, leituras de arquivo,
+  # raciocinio) - tende a ser bem maior que o I/O puro de uma chamada unica.
+  trivial:     20000     # rename, fix de uma linha, ajuste de config
+  small:       80000     # funcao isolada, teste unitario, doc curto
+  medium:      300000    # feature pequena multi-arquivo
+  large:       900000    # feature completa, refactor amplo
+  xlarge:      2500000   # modulo inteiro, migracao
+  # aliases XS/S/M/L/XL (usados pela skill demand-planning do squad)
+  XS:          20000
+  S:           80000
+  M:           300000
+  L:           900000
+  XL:          2500000
 
 # Estimativa em ACUs para engines que cobram em ACU (por classe de tarefa).
 task_size_acu:
+  # Devin cobra em ACUs; calibrado por porte tipico de tarefa autonoma.
   trivial: 1
-  small:   3
-  medium:  8
-  large:   25
-  xlarge:  70
+  small:   2
+  medium:  6
+  large:   18
+  xlarge:  45
+  XS: 1
+  S:  2
+  M:  6
+  L:  18
+  XL: 45
 
 # Teto de custo que dispara o Gate 2 (entrega) automaticamente.
 cost_gate2_threshold: 5.00

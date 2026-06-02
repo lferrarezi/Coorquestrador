@@ -1,0 +1,8 @@
+{
+  "chat.agent.enabled": true,
+  "github.copilot.chat.codeGeneration.instructions": [
+    {
+      "text": "Comece novas demandas pelo squad-orchestrator e preserve rastreabilidade."
+    }
+  ]
+}

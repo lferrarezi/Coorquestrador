@@ -277,15 +277,30 @@ class ChatPanelProvider {
             demand.status = "aguardando-gate1";
             store.upsert(demand);
             this.deps.refreshDemands();
+            // consumo de cota estimado, por assistente (tokens/ACU) — sem custo financeiro
+            const consMap = new Map();
+            const perTaskCons = {};
+            for (const t of demand.tasks) {
+                if (!t.engine)
+                    continue;
+                const unit = (ef.engines[t.engine]?.unit) || "token";
+                const base = unit === "acu" ? (cost.task_size_acu?.[t.size] ?? 0) : (cost.task_size_tokens?.[t.size] ?? 0);
+                const mult = cost.power_multiplier?.[t.power || "normal"] ?? 1;
+                const amount = base * mult;
+                perTaskCons[t.id] = { unit, amount };
+                const cur = consMap.get(t.engine) || { unit, amount: 0 };
+                cur.amount += amount;
+                consMap.set(t.engine, cur);
+            }
+            const consumption = [...consMap.entries()].map(([engine, v]) => ({ engine, unit: v.unit, amount: v.amount }));
             this.post({
                 type: "planCard",
                 title: demand.title,
-                currency: cost.currency || "",
-                total: est.total,
+                consumption,
                 tasks: demand.tasks.map((t) => ({
                     id: t.id, description: t.description, activity: t.activity,
                     engine: t.engine || "(sem assistente)", model: t.model || "", power: t.power || "", size: t.size,
-                    est: t.estimatedCost || 0, blocked: !t.engine,
+                    cons: perTaskCons[t.id] || null, blocked: !t.engine,
                 })),
             });
         }
@@ -343,7 +358,8 @@ class ChatPanelProvider {
             store.reconcile(demand.id);
             this.deps.refreshDemands();
             const final = store.get(demand.id);
-            this.post({ type: "summary", status: final.status, est: final.estimatedTotal || 0, real: final.realTotal || 0 });
+            const done = final.tasks.filter((t) => t.status === "concluida").length;
+            this.post({ type: "summary", status: final.status, done, total: final.tasks.length });
             this.draft = null;
         }
         catch (e) {
@@ -519,6 +535,7 @@ class ChatPanelProvider {
 
   function updateHint(){const e=curEngine();if(!installed.length)return;hint.className='hint';const a=e&&e.modelsAutoDetected?'  ·  modelos auto-detectados':'';const np=activePack?'  ·  nucleo: '+activePack:'';hint.textContent='Assistente: '+selEngine.value+(e&&e.binPath?'  ·  '+e.binPath:'')+np+a;}
 
+  function fmtUnit(n,unit){if(unit==='acu')return (Math.round(n*10)/10)+' ACU';const v=n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(0)+'k':String(Math.round(n));return v+' tokens';}
   function card(){hideWelcome();const c=el('div','card');thread.appendChild(c);scroll();return c;}
   function infoLine(t){const c=card();c.appendChild(el('div','sub',t));}
 
@@ -544,12 +561,15 @@ class ChatPanelProvider {
     else if(m.type==='planCard'){
       const c=card();
       c.appendChild(el('h4',null,'Plano: '+m.title));
-      const totalTxt = m.total>0 ? ('Consumo estimado: '+m.currency+' '+m.total.toFixed(2)) : 'Consumo estimado: n/d';
-      c.appendChild(el('div','sub',m.tasks.length+' etapa(s) · '+totalTxt));
+      const consTxt=(m.consumption&&m.consumption.length)
+        ? m.consumption.map(x=>x.engine+' ~'+fmtUnit(x.amount,x.unit)).join(' · ')
+        : 'n/d';
+      c.appendChild(el('div','sub',m.tasks.length+' etapa(s) · consumo estimado de cota: '+consTxt));
       m.tasks.forEach(t=>{
         const it=el('div','taskItem');
         const top=el('div','top');top.appendChild(el('span',null,t.engine+(t.model?' · '+t.model:'')+(t.power?' · '+t.power:'')));
-        top.appendChild(el('span','badge'+(t.blocked?' fail':''),t.blocked?'sem assistente':t.size));
+        const right=t.blocked?'sem assistente':(t.cons?fmtUnit(t.cons.amount,t.cons.unit):t.size);
+        top.appendChild(el('span','badge'+(t.blocked?' fail':''),right));
         it.appendChild(top);it.appendChild(el('div','desc',t.description||t.activity||t.id));
         it.dataset.id=t.id;c.appendChild(it);
       });
@@ -569,7 +589,7 @@ class ChatPanelProvider {
     }
     else if(m.type==='summary'){
       const c=card();c.appendChild(el('h4',null,m.status==='concluida'?'✓ Tarefa concluida':'Tarefa: '+m.status));
-      c.appendChild(el('div','sub','Consumo estimado '+m.est.toFixed(2)+' · real '+m.real.toFixed(2)));
+      c.appendChild(el('div','sub',m.done+' de '+m.total+' etapa(s) concluida(s)'));
     }
     else if(m.type==='installed'){
       installed=m.engines||[];selEngine.innerHTML='';

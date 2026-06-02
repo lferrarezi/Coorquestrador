@@ -1,0 +1,23 @@
+routes:
+  idea:
+    - squad-orchestrator
+    - strategy-council
+    - briefing-writer
+    - briefing-validator
+  app:
+    - squad-orchestrator
+    - spec-writer
+    - solution-architect
+    - implementation-agent
+    - qa-agent
+  ai_product:
+    - squad-orchestrator
+    - ai-solution-architect
+    - agent-architect
+    - evaluation-agent
+    - guardrail-agent
+  data_product:
+    - squad-orchestrator
+    - data-architect
+    - data-contract-agent
+    - data-quality-agent

@@ -34,6 +34,47 @@ vscode-extension/                  → extensão VSCode (núcleo TS + gates + es
 sample-root/.coorq/                → exemplo da estrutura de runtime na raiz multiprojetos
 ```
 
+## Núcleos de agentes por squad (Agent Packs)
+
+O **raciocínio** do Coorquestrador (o agente `coorquestrador.agent.md` + skills) é trocável por **núcleo**, para que cada squad use seus próprios agentes/skills/tools — **sem perder o motor central** (analisar → quebrar em tarefas → rotear ferramenta+modelo → executar por DAG → qualidade → visão centralizada).
+
+> Garantia: o motor determinístico (probe, roteamento, estimativa de cota, execução, gates) vive no **núcleo TypeScript** e nunca é trocado. O **contrato de saída** do plano (array JSON de tarefas roteadas) é sempre anexado pela extensão — então nenhum núcleo custom quebra a capacidade principal. Um núcleo sem `coorquestrador.agent.md` ainda planeja, usando o contrato padrão.
+
+### Estrutura de um núcleo
+
+```
+<nucleo>/
+  coorquestrador.agent.md   → cérebro de planejamento (raciocínio)
+  skills/<nome>/SKILL.md     → skills do squad (domínio, regras, padrões)
+  agents/                    → (opcional) agentes especialistas do squad
+  tools/                     → (opcional) ferramentas do squad
+  pack.json                  → manifesto (nome, versão, descrição, skills, agents, handoffs)
+```
+
+Os núcleos ficam em `.coorq/agent-packs/<nome>/`; o ativo é apontado por `.coorq/active-pack`. O núcleo **base** (v1.0.0) acompanha o projeto.
+
+### Manifesto `pack.json`
+
+```json
+{
+  "name": "squad-pagamentos",
+  "version": "1.2.0",
+  "description": "Núcleo do squad de pagamentos: padrões PCI, prioriza codex no backend.",
+  "skills": ["demand-planning", "engine-routing", "regras-pci"],
+  "agents": ["revisor-seguranca"],
+  "handoffs": ["qa-bot", "sec-bot"]
+}
+```
+
+Se o `pack.json` estiver ausente na importação, a extensão **sintetiza** o manifesto a partir do conteúdo (skills das subpastas, handoffs do frontmatter do agente) e grava um `pack.json` normalizado.
+
+### Importar / trocar (pela extensão)
+
+- Ícone **🧩** no painel de chat (ou comando **"Coorquestrador: Núcleo de agentes (trocar/importar)"**).
+- O menu lista os núcleos instalados (versão · nº de skills · ativo) e a opção **"Importar novo núcleo (pasta ou .zip)..."**.
+- Ao importar, escolha a fonte (pasta ou `.zip`) e dê um nome; o núcleo é extraído, validado e ativado.
+- O painel mostra o núcleo ativo no rodapé (*"núcleo: base"*). Na hora de planejar, o `agent.md` + as skills do núcleo ativo são injetados no prompt.
+
 ## Decisões de arquitetura (v1)
 
 | Decisão | Escolha |
@@ -41,6 +82,7 @@ sample-root/.coorq/                → exemplo da estrutura de runtime na raiz m
 | Descoberta de engines | **Híbrida**: `engines.yaml` declara; o `prober` valida em runtime (probe + credit_probe) |
 | Automação | **HITL em gates**: Gate 1 (plano+custo) sempre exige aprovação antes de gastar crédito |
 | Motor de planejamento | **Agente `.agent.md`** invocado via CLI do `plannerEngine` |
+| Núcleo de raciocínio | **Trocável por squad** (Agent Packs em `.coorq/agent-packs/`); motor TS preservado |
 | Formato inicial | **Extensão VSCode** (depois: app solo, bot Telegram) |
 
 ## Instalação da extensão (passo a passo)

@@ -8,6 +8,10 @@ exports.buildPlannerPrompt = buildPlannerPrompt;
 exports.parsePlan = parsePlan;
 exports.runPlanner = runPlanner;
 const child_process_1 = require("child_process");
+/** Escapa para uso seguro como argumento unico de shell (aspas simples). */
+function shellQuote(s) {
+    return `'${s.replace(/'/g, `'\\''`)}'`;
+}
 /** Monta o prompt enviado ao agente coorquestrador. */
 function buildPlannerPrompt(opts) {
     return [
@@ -67,7 +71,7 @@ function runPlanner(plannerCfg, prompt, cwd, timeoutSec) {
             .replace("{model}", plannerCfg.default_model)
             .replace("{power}", "high") // planejamento exige raciocinio
             .replace("{spec_file}", "")
-            .replace("{prompt}", plannerCfg.input_mode === "arg" ? JSON.stringify(prompt) : "");
+            .replace("{prompt}", plannerCfg.input_mode === "arg" ? shellQuote("\n" + prompt) : "");
         command = command.replace("{prompt}", "").trim();
         const child = (0, child_process_1.spawn)(command, { cwd, shell: true });
         let out = "";

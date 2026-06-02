@@ -1,0 +1,15 @@
+{
+  "enable_arjman": true,
+  "min_prompt_length": 500,
+  "max_compression_ratio": 0.6,
+  "platforms_supported": ["github-copilot", "claude", "chatgpt", "codex"],
+  "models_supported": ["gpt-4", "gpt-5", "opus-4.7", "claude-3", "llama-3"],
+  "logging": {
+    "metrics": true,
+    "warnings": true
+  },
+  "exceptions": {
+    "agents": ["brainstorming", "creative-writing"],
+    "prompt_types": ["conversational"]
+  }
+}
