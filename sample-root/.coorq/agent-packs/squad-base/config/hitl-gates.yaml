@@ -1,0 +1,8 @@
+gates:
+  - briefing_approved
+  - constitution_approved
+  - spec_approved
+  - plan_approved
+  - data_security_approved
+  - release_go_no_go
+  - post_implementation_review

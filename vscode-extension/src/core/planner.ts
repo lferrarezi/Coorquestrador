@@ -7,6 +7,11 @@ import * as fs from "fs";
 import { spawn } from "child_process";
 import { EngineConfig, EngineSnapshot, Task, Demand } from "./types";
 
+/** Escapa para uso seguro como argumento unico de shell (aspas simples). */
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 export interface PlanResult {
   tasks: Task[];
   routingNotes: string;
@@ -84,7 +89,7 @@ export function runPlanner(
       .replace("{model}", plannerCfg.default_model)
       .replace("{power}", "high") // planejamento exige raciocinio
       .replace("{spec_file}", "")
-      .replace("{prompt}", plannerCfg.input_mode === "arg" ? JSON.stringify(prompt) : "");
+      .replace("{prompt}", plannerCfg.input_mode === "arg" ? shellQuote("\n" + prompt) : "");
     command = command.replace("{prompt}", "").trim();
 
     const child = spawn(command, { cwd, shell: true });

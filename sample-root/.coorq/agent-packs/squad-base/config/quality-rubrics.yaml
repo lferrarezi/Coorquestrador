@@ -1,0 +1,5 @@
+rubrics:
+  completeness: "O artefato cobre objetivo, escopo, riscos, aceite e HITL."
+  consistency: "Nao ha contradicoes internas."
+  testability: "Criterios sao verificaveis."
+  traceability: "Existe ligacao entre ideia, spec, plano, tasks e evidencia."

@@ -6,6 +6,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildChatPrompt = buildChatPrompt;
 exports.runChat = runChat;
 const child_process_1 = require("child_process");
+/** Escapa para uso seguro como argumento unico de shell (aspas simples). */
+function shellQuote(s) {
+    return `'${s.replace(/'/g, `'\\''`)}'`;
+}
 /** Monta o prompt do turno atual incluindo o historico (CLI e stateless). */
 function buildChatPrompt(system, history) {
     const convo = history
@@ -20,7 +24,7 @@ function runChat(engineCfg, prompt, cwd, timeoutSec, power, onChunk) {
             .replace("{model}", engineCfg.default_model)
             .replace("{power}", power)
             .replace("{spec_file}", "")
-            .replace("{prompt}", engineCfg.input_mode === "arg" ? JSON.stringify(prompt) : "");
+            .replace("{prompt}", engineCfg.input_mode === "arg" ? shellQuote("\n" + prompt) : "");
         command = command.replace("{prompt}", "").trim();
         const child = (0, child_process_1.spawn)(command, { cwd, shell: true });
         let out = "";

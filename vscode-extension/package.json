@@ -2,8 +2,16 @@
   "name": "coorquestrador",
   "displayName": "Coorquestrador",
   "description": "Meta-orquestrador de runtime: planeja demandas, escolhe engines de IA (CLI), estima custo, executa com gates HITL e acompanha multiprojetos.",
-  "version": "0.0.9",
-  "publisher": "coorquestrador",
+  "version": "0.0.11",
+  "publisher": "lferrarezi",
+  "author": {
+    "name": "Luiz Alberto Abarca Ferrarezi"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lferrarezi/Coorquestrador"
+  },
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.90.0"

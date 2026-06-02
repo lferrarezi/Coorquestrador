@@ -5,6 +5,11 @@
 import { spawn } from "child_process";
 import { EngineConfig } from "./types";
 
+/** Escapa para uso seguro como argumento unico de shell (aspas simples). */
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 export interface ChatTurn { role: "user" | "assistant"; content: string; }
 
 /** Monta o prompt do turno atual incluindo o historico (CLI e stateless). */
@@ -29,7 +34,7 @@ export function runChat(
       .replace("{model}", engineCfg.default_model)
       .replace("{power}", power)
       .replace("{spec_file}", "")
-      .replace("{prompt}", engineCfg.input_mode === "arg" ? JSON.stringify(prompt) : "");
+      .replace("{prompt}", engineCfg.input_mode === "arg" ? shellQuote("\n" + prompt) : "");
     command = command.replace("{prompt}", "").trim();
 
     const child = spawn(command, { cwd, shell: true });
