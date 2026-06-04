@@ -15,12 +15,12 @@ Veja o README da raiz do projeto para arquitetura, instalação e uso.
 Logs de execução são gravados em `.coorq/logs/<demanda>/<tarefa>.log`.
 A view **Tarefas (por projeto)** expande demandas em etapas; tarefas com log podem ser abertas diretamente pelo menu de contexto ou clique no item.
 
-> Build de teste **0.1.6**.
+> Build estavel **1.0.0**.
 
 ## Versionamento
 
 - Minor impar: pre-release (`0.1.x`, `0.3.x`).
-- Minor par: release final (`0.2.x`, `0.4.x`).
+- Minor par: release final (`0.2.x`, `0.4.x`, `1.0.x`).
 - Correcoes menores incrementam patch dentro da mesma trilha.
 
 ## Release local

@@ -2,7 +2,7 @@
   "name": "coorquestrador",
   "displayName": "Coorquestrador",
   "description": "Meta-orquestrador de runtime: planeja demandas, escolhe CLIs de IA, modelos e esforço, estima cota e executa com gates HITL no projeto aberto.",
-  "version": "0.1.6",
+  "version": "1.0.0",
   "publisher": "lferrarezi",
   "author": {
     "name": "Luiz Alberto Abarca Ferrarezi"

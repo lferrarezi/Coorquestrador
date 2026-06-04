@@ -90,7 +90,7 @@ Se o `pack.json` estiver ausente na importação, a extensão **sintetiza** o ma
 O Coorquestrador segue a mesma regra do projeto Devin-Cli Chat:
 
 - Minor **ímpar** é trilha de **pre-release**: `0.1.x`, `0.3.x`, `0.5.x`.
-- Minor **par** é trilha de **release final**: `0.2.x`, `0.4.x`, `0.6.x`.
+- Minor **par** é trilha de **release final**: `0.2.x`, `0.4.x`, `0.6.x`, `1.0.x`.
 - Correções menores avançam o patch dentro da mesma trilha: `0.2.0` -> `0.2.1`, `0.3.0` -> `0.3.1`.
 
 O workflow de publicação marca automaticamente como pre-release quando o minor é ímpar. Antes de publicar, rode `npm run release:check` em `vscode-extension/`.
