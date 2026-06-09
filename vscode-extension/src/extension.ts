@@ -14,6 +14,7 @@ import { validatePlan } from "./core/planValidation";
 import { importPack, readManifest } from "./core/agentPacks";
 import { gate1PlanCost, gate2Delivery } from "./ui/gates";
 import { DemandNode, DemandsProvider, EnginesProvider, TaskNode } from "./ui/trees";
+import { taskDetailMarkdown } from "./core/taskDetails";
 import { ChatPanelProvider } from "./ui/chatPanel";
 import { Demand, Task } from "./core/types";
 
@@ -118,6 +119,37 @@ export function activate(context: vscode.ExtensionContext) {
       } catch (e: any) {
         vscode.window.showErrorMessage(`Falha ao abrir log: ${e.message}`);
       }
+    }),
+    vscode.commands.registerCommand("coorq.showTaskDetails", async (node?: TaskNode) => {
+      const task = node?.task;
+      const demand = node?.demand;
+      if (!task || !demand) { vscode.window.showInformationMessage("Selecione uma tarefa na arvore."); return; }
+      const doc = await vscode.workspace.openTextDocument({
+        language: "markdown",
+        content: taskDetailMarkdown(demand, task),
+      });
+      await vscode.window.showTextDocument(doc, { preview: true });
+    }),
+    vscode.commands.registerCommand("coorq.rerunTask", async (node?: TaskNode) => {
+      const task = node?.task;
+      const demand = node?.demand;
+      if (!task || !demand) { vscode.window.showInformationMessage("Selecione uma tarefa na arvore."); return; }
+      const approved = await vscode.window.showWarningMessage(
+        `Reexecutar ${task.id}? A demanda voltara para aguardando Gate 1.`,
+        { modal: true },
+        "Reexecutar"
+      );
+      if (approved !== "Reexecutar") return;
+      task.status = "planejada";
+      task.log = undefined;
+      task.logFile = undefined;
+      task.durationMs = undefined;
+      demand.status = "aguardando-gate1";
+      const c = cfg();
+      const conf = ensureWorkspaceConfig() || new CoorqConfig(c.root, c.configDir);
+      new DemandStore(conf.statePath()).upsert(demand);
+      demandsProvider.refresh();
+      vscode.window.showInformationMessage(`Tarefa ${task.id} marcada para reexecucao. Rode "Revisar e executar tarefa".`);
     }),
     vscode.commands.registerCommand("coorq.copyDemandSummary", async (node?: DemandNode) => {
       const d = node?.demand;

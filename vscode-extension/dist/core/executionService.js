@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.gate2ReasonsForTask = gate2ReasonsForTask;
 exports.runDemandExecution = runDemandExecution;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -45,13 +46,22 @@ const estimator_1 = require("./estimator");
 function sddForTask(t) {
     return `# Tarefa ${t.id}\n${t.description}\n\n## Criterio de aceite\n${t.acceptance}`;
 }
-function gate2Reasons(t, cost) {
+function gate2ReasonsForTask(t, cost) {
     const reasons = [];
     if ((0, estimator_1.crossesQuotaGate2)(t, cost) || (0, estimator_1.crossesGate2)(t.estimatedCost || 0, cost)) {
         reasons.push("consumo de cota acima do teto");
     }
+    if (t.criticality === "alta" || t.criticality === "critica") {
+        reasons.push("criticidade alta");
+    }
+    if ((t.artifacts || []).length > 0) {
+        reasons.push("artefatos gerados ou alterados");
+    }
     if ((t.log || "").toLowerCase().includes("error")) {
         reasons.push("log de execucao contem erro");
+    }
+    if (/\b(commit|modified|created|deleted|write|overwrite)\b/i.test(t.log || "")) {
+        reasons.push("impacto em arquivos detectado no log");
     }
     return reasons;
 }
@@ -104,7 +114,7 @@ async function runDemandExecution(opts) {
             persistTaskLog(logDir, task, result);
     }
     for (const task of demand.tasks.filter((t) => t.status === "revisao")) {
-        const reasons = gate2Reasons(task, opts.costTable);
+        const reasons = gate2ReasonsForTask(task, opts.costTable);
         let approved = true;
         if (reasons.length && opts.reviewGate2) {
             approved = await opts.reviewGate2({ task, reasons });

@@ -2,7 +2,7 @@
   "name": "coorquestrador",
   "displayName": "Coorquestrador",
   "description": "Meta-orquestrador de runtime: planeja demandas, escolhe CLIs de IA, modelos e esforço, estima cota e executa com gates HITL no projeto aberto.",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "publisher": "lferrarezi",
   "author": {
     "name": "Luiz Alberto Abarca Ferrarezi"
@@ -55,6 +55,14 @@
         "title": "Coorquestrador: Abrir log da tarefa"
       },
       {
+        "command": "coorq.showTaskDetails",
+        "title": "Coorquestrador: Ver detalhes da tarefa"
+      },
+      {
+        "command": "coorq.rerunTask",
+        "title": "Coorquestrador: Reexecutar tarefa"
+      },
+      {
         "command": "coorq.copyDemandSummary",
         "title": "Coorquestrador: Copiar resumo da tarefa"
       },
@@ -66,19 +74,29 @@
     "menus": {
       "view/item/context": [
         {
+          "command": "coorq.showTaskDetails",
+          "when": "view == coorq.demands && viewItem =~ /task/",
+          "group": "inline@1"
+        },
+        {
           "command": "coorq.openTaskLog",
           "when": "view == coorq.demands && viewItem == taskWithLog",
-          "group": "inline@1"
+          "group": "inline@2"
+        },
+        {
+          "command": "coorq.rerunTask",
+          "when": "view == coorq.demands && viewItem =~ /task/",
+          "group": "inline@3"
         },
         {
           "command": "coorq.copyDemandSummary",
           "when": "view == coorq.demands && viewItem == demand",
-          "group": "inline@2"
+          "group": "inline@4"
         },
         {
           "command": "coorq.executeApproved",
           "when": "view == coorq.demands && viewItem == demand",
-          "group": "inline@3"
+          "group": "inline@5"
         }
       ]
     },

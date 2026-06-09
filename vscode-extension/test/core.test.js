@@ -12,6 +12,8 @@ const { CoorqConfig } = require("../dist/core/config");
 const { buildCommand } = require("../dist/core/commandBuilder");
 const { ensureInsideDir, redactCommand, redactSecrets, validateExecTemplate } = require("../dist/core/commandSecurity");
 const { discoverInstalledClis, discoverModels, resolveBinPath } = require("../dist/core/prober");
+const { gate2ReasonsForTask } = require("../dist/core/executionService");
+const { taskDetailMarkdown } = require("../dist/core/taskDetails");
 
 function baseEngines() {
   return {
@@ -245,5 +247,39 @@ async function test(name, fn) {
     const src = fs.readFileSync(path.join(__dirname, "..", "src", "ui", "chatPanel.ts"), "utf8");
     assert.ok(src.includes('case "cmd"'));
     assert.ok(src.includes("vscode.commands.executeCommand(msg.command)"));
+  });
+
+  await test("gate2 reasons include impact beyond quota", () => {
+    const cost = {
+      currency: "USD",
+      power_multiplier: { normal: 1 },
+      models: { "gpt-5.4": { unit: "token" } },
+      task_size_tokens: { small: 100 },
+      task_size_acu: { small: 1 },
+      cost_gate2_threshold: 999,
+      quota_gate2_threshold: { token: 999999 },
+    };
+    const t = { ...task("T-impact"), criticality: "alta", artifacts: ["src/app.ts"], log: "modified src/app.ts" };
+    const reasons = gate2ReasonsForTask(t, cost);
+    assert.ok(reasons.includes("criticidade alta"));
+    assert.ok(reasons.includes("artefatos gerados ou alterados"));
+    assert.ok(reasons.includes("impacto em arquivos detectado no log"));
+  });
+
+  await test("task detail markdown contains operational fields", () => {
+    const demand = { id: "D1", title: "Demand", description: "Desc", project: ".", createdAt: "now", status: "em-execucao", tasks: [] };
+    const t = { ...task("T-detail"), estimatedQuota: 1200, realQuota: 900, quotaUnit: "token", durationMs: 42, logFile: "/tmp/t.log" };
+    const md = taskDetailMarkdown(demand, t);
+    assert.ok(md.includes("# activity T-detail"));
+    assert.ok(md.includes("- Assistente: codex"));
+    assert.ok(md.includes("- Cota estimada: 1.200 token"));
+    assert.ok(md.includes("- Log: /tmp/t.log"));
+  });
+
+  await test("package contributes task detail and rerun commands", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+    const commands = pkg.contributes.commands.map((c) => c.command);
+    assert.ok(commands.includes("coorq.showTaskDetails"));
+    assert.ok(commands.includes("coorq.rerunTask"));
   });
 })();

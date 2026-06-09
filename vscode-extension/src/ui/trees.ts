@@ -38,12 +38,13 @@ export class TaskNode extends vscode.TreeItem {
     ].filter(Boolean).join("\n");
     this.iconPath = new vscode.ThemeIcon(iconForTaskStatus(task.status));
     this.contextValue = task.logFile ? "taskWithLog" : "task";
+    this.command = {
+      command: "coorq.showTaskDetails",
+      title: "Detalhes da tarefa",
+      arguments: [this],
+    };
     if (task.logFile) {
-      this.command = {
-        command: "coorq.openTaskLog",
-        title: "Abrir log",
-        arguments: [this],
-      };
+      this.tooltip += "\nClique para ver detalhes; use o menu de contexto para abrir o log.";
     }
   }
 }

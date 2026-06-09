@@ -43,13 +43,22 @@ function sddForTask(t: Task): string {
   return `# Tarefa ${t.id}\n${t.description}\n\n## Criterio de aceite\n${t.acceptance}`;
 }
 
-function gate2Reasons(t: Task, cost: CostTable): string[] {
+export function gate2ReasonsForTask(t: Task, cost: CostTable): string[] {
   const reasons: string[] = [];
   if (crossesQuotaGate2(t, cost) || crossesGate2(t.estimatedCost || 0, cost)) {
     reasons.push("consumo de cota acima do teto");
   }
+  if (t.criticality === "alta" || t.criticality === "critica") {
+    reasons.push("criticidade alta");
+  }
+  if ((t.artifacts || []).length > 0) {
+    reasons.push("artefatos gerados ou alterados");
+  }
   if ((t.log || "").toLowerCase().includes("error")) {
     reasons.push("log de execucao contem erro");
+  }
+  if (/\b(commit|modified|created|deleted|write|overwrite)\b/i.test(t.log || "")) {
+    reasons.push("impacto em arquivos detectado no log");
   }
   return reasons;
 }
@@ -106,7 +115,7 @@ export async function runDemandExecution(opts: RunDemandOptions): Promise<RunDem
   }
 
   for (const task of demand.tasks.filter((t) => t.status === "revisao")) {
-    const reasons = gate2Reasons(task, opts.costTable);
+    const reasons = gate2ReasonsForTask(task, opts.costTable);
     let approved = true;
     if (reasons.length && opts.reviewGate2) {
       approved = await opts.reviewGate2({ task, reasons });

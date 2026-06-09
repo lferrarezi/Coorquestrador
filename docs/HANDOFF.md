@@ -43,7 +43,7 @@ Separação entre DETERMINISMO e RACIOCÍNIO:
   squad não consegue quebrar a capacidade principal.
 
 ## FORMATO ATUAL
-Extensão do VSCode (versão 1.0.1). Repositório:
+Extensão do VSCode (versão 1.1.0 pre-release). Repositório:
 github.com/lferrarezi/Coorquestrador (branch main). O escopo atual é exclusivamente
 VS Code; formatos externos foram descartados.
 
@@ -127,7 +127,7 @@ coorq.maxParallel, coorq.requireGate1.
 ## ESTADO ATUAL / O QUE JÁ FUNCIONA
 - Pipeline validado ponta-a-ponta: planejar (claude) → rotear → executar (criou
   arquivo real). 5 assistentes respondem (claude, codex, devin, gemini, copilot).
-- Build 1.0.1 estavel, empacotada e instalavel (.vsix).
+- Build 1.1.0 pre-release, empacotada e instalavel (.vsix).
 - Convenção de versão: minor impar e trilha pre-release (0.1.x, 0.3.x);
   minor par e release final (0.2.x, 0.4.x, 1.0.x). Correcoes menores incrementam patch
   dentro da mesma trilha.
@@ -143,8 +143,8 @@ coorq.maxParallel, coorq.requireGate1.
 ## PRÓXIMOS PASSOS SUGERIDOS
 1. Calibrar volumes de task_size_* com dados reais de uso por classe de tarefa.
 2. credit_probe para claude/gemini/devin (via API com chave, se disponível).
-3. Painel "Minhas tarefas" mais rico (detalhe por tarefa, logs de execução, re-exec).
-4. Gate 2 (entrega) com regras de impacto além de cota.
+3. Validacao manual pos-marketplace em Windows/macOS com CLIs reais.
+4. Evoluir painel "Minhas tarefas" para filtros e historico por demanda.
 5. Melhorar UX e observabilidade dentro da extensão VS Code.
 
 ## COMO RODAR/EMPACOTAR
