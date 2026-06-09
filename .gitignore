@@ -1,0 +1,8 @@
+node_modules/
+*.vsix
+*.log
+.DS_Store
+coverage/
+*.tsbuildinfo
+* 2.*
+* 2
