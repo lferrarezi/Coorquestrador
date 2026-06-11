@@ -7,8 +7,11 @@ import { EnginesFile, CostTable } from "./config";
 import { buildCommand } from "./commandBuilder";
 import { redactCommand, redactSecrets } from "./commandSecurity";
 import { DemandStore } from "./demandStore";
-import { executePlan, ExecResult } from "./executor";
+import { executePlan, ExecResult, ExecutionController } from "./executor";
 import { crossesGate2, crossesQuotaGate2 } from "./estimator";
+import { HistoryStore } from "./historyStore";
+import { measureUsage } from "./usageParser";
+import { reviewTask, ReviewVerdict } from "./reviewer";
 import { Demand, Task } from "./types";
 
 export interface ExecutionUpdate {
@@ -19,6 +22,8 @@ export interface ExecutionUpdate {
 export interface TaskReview {
   task: Task;
   reasons: string[];
+  /** parecer do revisor automatizado, quando habilitado */
+  verdict?: ReviewVerdict;
 }
 
 export interface RunDemandOptions {
@@ -32,6 +37,12 @@ export interface RunDemandOptions {
   gate1Approved: boolean;
   onUpdate: (update: ExecutionUpdate) => void;
   reviewGate2?: (review: TaskReview) => Promise<boolean>;
+  /** cancela execucoes em andamento (botao Parar) */
+  controller?: ExecutionController;
+  /** stream de saida por tarefa, para UI ao vivo */
+  onOutput?: (taskId: string, chunk: string) => void;
+  /** roda o revisor automatizado antes do Gate 2 (default: true) */
+  autoReview?: boolean;
 }
 
 export interface RunDemandResult {
@@ -96,12 +107,16 @@ export async function runDemandExecution(opts: RunDemandOptions): Promise<RunDem
   const specDir = path.join(opts.root, opts.configDir, "specs", demand.id);
   const logDir = path.join(opts.root, opts.configDir, "logs", demand.id);
 
+  const history = new HistoryStore(path.join(opts.root, opts.configDir, "state", "history.json"));
+
   const results = await executePlan({
     tasks: demand.tasks,
     cwd,
     maxParallel: Math.min(opts.maxParallel, opts.enginesFile.defaults.max_parallel),
     execTimeoutSec: opts.enginesFile.defaults.exec_timeout_seconds,
     gate1Approved: opts.gate1Approved,
+    controller: opts.controller,
+    onOutput: opts.onOutput,
     buildFn: (t) => buildCommand(t, opts.enginesFile.engines[t.engine!], sddForTask(t), cwd, specDir),
     onUpdate: (t) => {
       opts.store.upsert(demand);
@@ -111,14 +126,49 @@ export async function runDemandExecution(opts: RunDemandOptions): Promise<RunDem
 
   for (const result of results) {
     const task = demand.tasks.find((t) => t.id === result.taskId);
-    if (task) persistTaskLog(logDir, task, result);
+    if (!task) continue;
+    persistTaskLog(logDir, task, result);
+
+    // cota REAL medida do stdout (quando o CLI reporta usage); senao mantem estimativa.
+    const engineCfg = task.engine ? opts.enginesFile.engines[task.engine] : undefined;
+    const measured = measureUsage(engineCfg, result.stdout);
+    if (measured) {
+      task.realQuota = measured.amount;
+      task.quotaUnit = measured.unit;
+      task.realQuotaMeasured = true;
+    }
+
+    history.appendExecution({
+      demandId: demand.id,
+      taskId: task.id,
+      engine: task.engine || "",
+      model: task.model || "",
+      power: task.power || "",
+      size: task.size,
+      unit: task.quotaUnit || engineCfg?.unit || "token",
+      estimatedQuota: task.estimatedQuota || 0,
+      realQuota: measured ? measured.amount : null,
+      measured: !!measured,
+      exitCode: result.code,
+      durationMs: result.durationMs,
+      finishedAt: new Date().toISOString(),
+    });
   }
 
   for (const task of demand.tasks.filter((t) => t.status === "revisao")) {
     const reasons = gate2ReasonsForTask(task, opts.costTable);
+
+    // revisor automatizado (assistente barato) compara resultado vs aceite.
+    let verdict: ReviewVerdict | undefined;
+    if (opts.autoReview !== false && !opts.controller?.cancelled) {
+      verdict = await reviewTask(task, opts.enginesFile, cwd);
+      task.reviewVerdict = verdict;
+      if (!verdict.ok) reasons.push(`revisor automatizado reprovou: ${verdict.summary}`);
+    }
+
     let approved = true;
     if (reasons.length && opts.reviewGate2) {
-      approved = await opts.reviewGate2({ task, reasons });
+      approved = await opts.reviewGate2({ task, reasons, verdict });
     }
     task.status = approved ? "concluida" : "rejeitada";
     task.realQuota = task.realQuota ?? task.estimatedQuota;

@@ -10,12 +10,16 @@ import { CoorqConfig } from "../core/config";
 import { DemandStore } from "../core/demandStore";
 import { runChat, buildChatPrompt, ChatTurn } from "../core/chat";
 import { applyCliDiscoveryToEnginesFile, discoverInstalledClis, detectInstalled, probeAll } from "../core/prober";
-import { buildPlannerPrompt, parsePlan, runPlanner } from "../core/planner";
+import { buildPlannerPrompt, parsePlan, runPlanner, splitForReplan, buildReplanPrompt, mergeReplanned } from "../core/planner";
 import { estimateDemand, estimateDemandQuota } from "../core/estimator";
 import { validatePlan } from "../core/planValidation";
 import { runDemandExecution } from "../core/executionService";
+import { ExecutionController } from "../core/executor";
+import { rerouteForQuota } from "../core/rerouting";
+import { HistoryStore } from "../core/historyStore";
 import { gate2Delivery } from "./gates";
 import { Demand, EngineSnapshot } from "../core/types";
+import { EnginesFile, CostTable } from "../core/config";
 
 export interface ChatPanelDeps {
   cfg: () => { root: string; configDir: string; plannerEngine: string; maxParallel: number };
@@ -33,6 +37,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private engines: EngineSnapshot[] = [];
   private selection: { engineId?: string; model?: string; power?: string };
   private draft: Demand | null = null;
+  private controller: ExecutionController | null = null;
 
   constructor(private readonly deps: ChatPanelDeps) {
     this.selection = deps.state.get(SELECTION_KEY, {});
@@ -74,6 +79,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case "projectChosen": await this.createAndPlan(); break;
         case "approveExecute": await this.execute(); break;
         case "replan": await this.planDraft(); break;
+        case "replanFailed": await this.replanFailed(); break;
+        case "stopExecution":
+          this.controller?.cancel();
+          this.post({ type: "info", text: "Parando execucao... tarefas em andamento serao encerradas." });
+          break;
         case "cancelTask":
           this.draft = null; this.post({ type: "info", text: "Tarefa descartada." }); break;
       }
@@ -224,40 +234,121 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       const plannerCfg = ef.engines[this.selection.engineId || c.plannerEngine] || ef.engines[c.plannerEngine];
       const raw = await runPlanner(plannerCfg, prompt, c.root, ef.defaults.exec_timeout_seconds);
       demand.tasks = parsePlan(raw);
-      const validation = validatePlan(demand.tasks, ef, snaps);
-      if (!validation.valid) {
-        demand.status = "nova"; store.upsert(demand); this.deps.refreshDemands();
-        this.post({ type: "error", text: `Plano invalido: ${validation.errors.slice(0, 4).join(" | ")}` });
-        return;
-      }
-      validation.warnings.forEach((w) => this.deps.log(`[plan-warning] ${w}`));
-      const quota = estimateDemandQuota(demand.tasks, cost);
-      const est = estimateDemand(demand.tasks, cost);
-      demand.tasks.forEach((t) => {
-        const q = quota.perTask[t.id];
-        t.quotaUnit = q.unit;
-        t.estimatedQuota = q.amount;
-        t.estimatedCost = est.perTask[t.id] || 0;
-      });
-      demand.estimatedQuotaByEngine = quota.byEngine;
-      demand.estimatedTotal = est.total;
-      demand.status = "aguardando-gate1";
-      store.upsert(demand); this.deps.refreshDemands();
-
-      const consumption = Object.entries(quota.byEngine).map(([engine, v]) => ({ engine, unit: v.unit, amount: v.amount }));
-
-      this.post({
-        type: "planCard",
-        title: demand.title,
-        consumption,
-        tasks: demand.tasks.map((t) => ({
-          id: t.id, description: t.description, activity: t.activity,
-          engine: t.engine || "(sem assistente)", model: t.model || "", power: t.power || "", size: t.size,
-          cons: quota.perTask[t.id] || null, blocked: !t.engine,
-        })),
-      });
+      this.routeEstimateAndPresent(demand, ef, cost, snaps, store, conf);
     } catch (e: any) {
       this.post({ type: "error", text: `Falha ao planejar: ${e.message}` });
+    }
+  }
+
+  /**
+   * Etapa deterministica pos-planejador: valida o plano, re-roteia por cota
+   * (assistente esgotado -> melhor elegivel), estima o consumo e apresenta o
+   * card do Gate 1. Compartilhada entre planejamento e replanejamento parcial.
+   */
+  private routeEstimateAndPresent(
+    demand: Demand,
+    ef: EnginesFile,
+    cost: CostTable,
+    snaps: EngineSnapshot[],
+    store: DemandStore,
+    conf: CoorqConfig,
+    note?: string
+  ) {
+    const validation = validatePlan(demand.tasks.filter((t) => t.status !== "concluida"), ef, snaps);
+    if (!validation.valid) {
+      demand.status = "nova"; store.upsert(demand); this.deps.refreshDemands();
+      this.post({ type: "error", text: `Plano invalido: ${validation.errors.slice(0, 4).join(" | ")}` });
+      return;
+    }
+    validation.warnings.forEach((w) => this.deps.log(`[plan-warning] ${w}`));
+
+    // re-roteamento deterministico por cota (pre-Gate 1)
+    const pending = demand.tasks.filter((t) => t.status !== "concluida");
+    const reroutes = rerouteForQuota(pending, ef, snaps);
+    if (reroutes.length) {
+      const history = new HistoryStore(path.join(this.deps.cfg().root, this.deps.cfg().configDir, "state", "history.json"));
+      for (const r of reroutes) {
+        history.appendRoutingOverride({
+          at: new Date().toISOString(),
+          taskId: r.task.id,
+          context: "reroute-quota",
+          suggestedEngine: r.from,
+          chosenEngine: r.to,
+          reason: r.reason,
+        });
+        this.deps.log(`[reroute] ${r.task.id}: ${r.from} -> ${r.to} (${r.reason})`);
+      }
+    }
+
+    const quota = estimateDemandQuota(pending, cost);
+    const est = estimateDemand(pending, cost);
+    pending.forEach((t) => {
+      const q = quota.perTask[t.id];
+      if (q) { t.quotaUnit = q.unit; t.estimatedQuota = q.amount; }
+      t.estimatedCost = est.perTask[t.id] || 0;
+    });
+    demand.estimatedQuotaByEngine = quota.byEngine;
+    demand.estimatedTotal = est.total;
+    demand.status = "aguardando-gate1";
+    store.upsert(demand); this.deps.refreshDemands();
+
+    const consumption = Object.entries(quota.byEngine).map(([engine, v]) => ({ engine, unit: v.unit, amount: v.amount }));
+
+    this.post({
+      type: "planCard",
+      title: demand.title,
+      note,
+      consumption,
+      reroutes: reroutes.map((r) => ({ id: r.task.id, from: r.from, to: r.to, reason: r.reason })),
+      tasks: pending.map((t) => ({
+        id: t.id, description: t.description, activity: t.activity,
+        engine: t.engine || "(sem assistente)", model: t.model || "", power: t.power || "", size: t.size,
+        cons: quota.perTask[t.id] || null, blocked: !t.engine || t.status === "bloqueada",
+        rerouted: t.rerouted ? `${t.rerouted.from} → ${t.engine}` : undefined,
+      })),
+    });
+  }
+
+  // ---------- REPLANEJAMENTO PARCIAL (subgrafo que falhou) ----------
+  private async replanFailed() {
+    if (!this.draft) { this.post({ type: "error", text: "Nenhuma tarefa em recuperacao." }); return; }
+    const c = this.deps.cfg();
+    const conf = this.configOrNull() || new CoorqConfig(c.root, c.configDir);
+    let ef = conf.loadEngines();
+    ef = applyCliDiscoveryToEnginesFile(ef, await discoverInstalledClis(ef.defaults?.probe_timeout_seconds || 10, ef));
+    const cost = conf.loadCost();
+    const store = new DemandStore(conf.statePath());
+    const demand = this.draft;
+
+    const input = splitForReplan(demand);
+    if (input.failed.length === 0) { this.post({ type: "info", text: "Nada a recuperar: nenhuma etapa falhou." }); return; }
+
+    this.post({ type: "planStart" });
+    try {
+      const snaps = await probeAll(ef);
+      const enginesMeta: any = {};
+      for (const [id, e] of Object.entries<any>(ef.engines))
+        enginesMeta[id] = { models: e.models, powers: e.powers, best_for: e.best_for, unit: e.unit, location: e.location };
+      conf.ensureAgentPacks();
+      const agentSpec = fs.existsSync(conf.agentPath()) ? fs.readFileSync(conf.agentPath(), "utf8") : "(agente coorquestrador)";
+      const prompt = buildReplanPrompt({
+        agentSpec, skills: conf.loadSkills(), input,
+        projectContext: this.projectContext(c.root), snapshot: snaps, enginesMeta,
+      });
+      const plannerCfg = ef.engines[this.selection.engineId || c.plannerEngine] || ef.engines[c.plannerEngine];
+      const raw = await runPlanner(plannerCfg, prompt, c.root, ef.defaults.exec_timeout_seconds);
+      const replanned = parsePlan(raw);
+      if (replanned.length === 0) {
+        this.post({ type: "error", text: "O planejador nao retornou um plano de recuperacao valido." });
+        return;
+      }
+      mergeReplanned(demand, replanned);
+      this.routeEstimateAndPresent(
+        demand, ef, cost, snaps, store, conf,
+        `Plano de recuperacao: ${input.completed.length} etapa(s) concluida(s) preservada(s), ${replanned.length} nova(s) etapa(s).`
+      );
+    } catch (e: any) {
+      this.post({ type: "error", text: `Falha ao replanejar: ${e.message}` });
     }
   }
 
@@ -283,6 +374,15 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const demand = this.draft;
 
     this.post({ type: "execStart" });
+    this.controller = new ExecutionController();
+
+    // throttle do streaming: acumula e envia o tail por tarefa a cada 500ms
+    const tails = new Map<string, string>();
+    const flush = () => {
+      for (const [id, tail] of tails) this.post({ type: "execOutput", id, tail });
+      tails.clear();
+    };
+    const flushTimer = setInterval(flush, 500);
 
     try {
       await runDemandExecution({
@@ -294,22 +394,48 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         configDir: c.configDir,
         maxParallel: c.maxParallel,
         gate1Approved: true,
+        controller: this.controller,
+        onOutput: (taskId, chunk) => {
+          const cur = (tails.get(taskId) || "") + chunk;
+          tails.set(taskId, cur.slice(-400));
+        },
         onUpdate: ({ task }) => {
           this.deps.refreshDemands();
-          this.post({ type: "execUpdate", id: task.id, status: task.status, logFile: task.logFile || "" });
+          this.post({
+            type: "execUpdate", id: task.id, status: task.status, logFile: task.logFile || "",
+            quota: task.realQuotaMeasured && task.realQuota != null
+              ? { amount: task.realQuota, unit: task.quotaUnit || "token", measured: true }
+              : undefined,
+          });
         },
-        reviewGate2: async ({ task, reasons }) => {
-          this.post({ type: "gate2", id: task.id, reasons });
+        reviewGate2: async ({ task, reasons, verdict }) => {
+          this.post({ type: "gate2", id: task.id, reasons, verdict });
           return gate2Delivery(task, reasons);
         },
       });
       this.deps.refreshDemands();
       const final = store.get(demand.id)!;
       const done = final.tasks.filter((t) => t.status === "concluida").length;
-      this.post({ type: "summary", status: final.status, done, total: final.tasks.length });
-      this.draft = null;
+      const failed = final.tasks.filter((t) => t.status === "rejeitada" || t.status === "bloqueada").length;
+      const verdicts = final.tasks
+        .filter((t) => t.reviewVerdict)
+        .map((t) => ({ id: t.id, ok: t.reviewVerdict!.ok, reviewer: t.reviewVerdict!.reviewer, summary: t.reviewVerdict!.summary }));
+      const measured = final.tasks
+        .filter((t) => t.realQuotaMeasured && t.realQuota != null)
+        .map((t) => ({ id: t.id, amount: t.realQuota!, unit: t.quotaUnit || "token" }));
+      this.post({
+        type: "summary", status: final.status, done, total: final.tasks.length,
+        failed, canReplan: failed > 0, verdicts, measured,
+        cancelled: this.controller.cancelled,
+      });
+      // mantem o draft quando ha falhas: habilita "Replanejar falhas"
+      this.draft = failed > 0 ? store.get(demand.id) || demand : null;
     } catch (e: any) {
       this.post({ type: "error", text: `Falha na execucao: ${e.message}` });
+    } finally {
+      clearInterval(flushTimer);
+      flush();
+      this.controller = null;
     }
   }
 
@@ -364,6 +490,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   .taskItem{border:1px solid var(--border);border-radius:8px;padding:8px;display:grid;gap:3px;background:var(--editor)}
   .taskItem .top{display:flex;justify-content:space-between;gap:8px;font-size:11px}
   .taskItem .desc{font-size:12px}
+  .tail{font-family:var(--vscode-editor-font-family,monospace);font-size:10px;color:var(--muted);background:var(--code);border-radius:6px;padding:5px 7px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:72px;overflow:hidden}
   .badge{font-size:10px;padding:1px 6px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
   .badge.run{color:var(--accent-fg);background:var(--accent);border:0}
   .badge.done{color:#fff;background:#2ea043;border:0}
@@ -406,7 +533,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     </div>
     <div class="spacer"></div>
     <button class="iconBtn" id="coreBtn" title="Nucleo de agentes (trocar/atualizar)">&#x1F9E9;</button>
-    <button class="iconBtn" data-cmd="coorq.probeEngines" title="Verificar cota dos assistentes">&#x1F4CA;</button>
+    <button class="iconBtn" data-cmd="coorq.probeEngines" title="Verificar cota dos assistentes">&#x1F50C;</button>
+    <button class="iconBtn" data-cmd="coorq.quotaDashboard" title="Dashboard de cota">&#x1F4CA;</button>
     <button class="iconBtn" data-cmd="coorq.showDemands" title="Minhas tarefas">&#x2630;</button>
     <button class="iconBtn" id="reset" title="Nova conversa">&#x2715;</button>
   </div>
@@ -508,13 +636,19 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     else if(m.type==='planCard'){
       const c=card();
       c.appendChild(el('h4',null,'Plano: '+m.title));
+      if(m.note) c.appendChild(el('div','sub',m.note));
       const consTxt=(m.consumption&&m.consumption.length)
         ? m.consumption.map(x=>x.engine+' ~'+fmtUnit(x.amount,x.unit)).join(' · ')
         : 'n/d';
       c.appendChild(el('div','sub',m.tasks.length+' etapa(s) · consumo estimado de cota: '+consTxt));
+      if(m.reroutes&&m.reroutes.length){
+        const rr=el('div','sub');
+        rr.textContent='⚠ Re-roteado por cota: '+m.reroutes.map(r=>r.id+' ('+r.from+' → '+r.to+': '+r.reason+')').join(' · ');
+        c.appendChild(rr);
+      }
       m.tasks.forEach(t=>{
         const it=el('div','taskItem');
-        const top=el('div','top');top.appendChild(el('span',null,t.engine+(t.model?' · '+t.model:'')+(t.power?' · '+t.power:'')));
+        const top=el('div','top');top.appendChild(el('span',null,t.engine+(t.model?' · '+t.model:'')+(t.power?' · '+t.power:'')+(t.rerouted?'  (re-roteado de '+t.rerouted.split(' → ')[0]+')':'')));
         const right=t.blocked?'sem assistente':(t.cons?fmtUnit(t.cons.amount,t.cons.unit):t.size);
         top.appendChild(el('span','badge'+(t.blocked?' fail':''),right));
         it.appendChild(top);it.appendChild(el('div','desc',t.description||t.activity||t.id));
@@ -526,23 +660,53 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       const cancel=el('button','btn ghost','Cancelar');cancel.onclick=()=>{c.remove();vscode.postMessage({type:'cancelTask'});};
       btns.appendChild(ok);btns.appendChild(re);btns.appendChild(cancel);c.appendChild(btns);
     }
-    else if(m.type==='execStart'){execCard=card();execCard.appendChild(el('h4',null,'Executando...'));}
+    else if(m.type==='execStart'){
+      execCard=card();
+      const head=el('div',null);head.style.display='flex';head.style.justifyContent='space-between';head.style.alignItems='center';
+      head.appendChild(el('h4',null,'Executando...'));
+      const stop=el('button','btn ghost','■ Parar');stop.dataset.stop='1';
+      stop.onclick=()=>{stop.disabled=true;stop.textContent='Parando...';vscode.postMessage({type:'stopExecution'});};
+      head.appendChild(stop);execCard.appendChild(head);
+    }
     else if(m.type==='execUpdate'){
       if(!execCard)return;let it=execCard.querySelector('[data-id="'+m.id+'"]');
       if(!it){it=el('div','taskItem');it.dataset.id=m.id;const top=el('div','top');top.appendChild(el('span',null,m.id));const bd=el('span','badge');bd.dataset.b='1';top.appendChild(bd);it.appendChild(top);execCard.appendChild(it);}
       const bd=it.querySelector('[data-b]')||it.querySelector('.badge');
-      const map={executando:['run','executando'],concluida:['done','concluida'],rejeitada:['fail','rejeitada'],revisao:['','em revisao'],aprovada:['','na fila']};
+      const map={executando:['run','executando'],concluida:['done','concluida'],rejeitada:['fail','rejeitada'],revisao:['','em revisao'],aprovada:['','na fila'],bloqueada:['fail','bloqueada']};
       const v=map[m.status]||['',m.status];bd.className='badge '+v[0];bd.textContent=v[1];
+      if(m.status!=='executando'){const tl=it.querySelector('[data-tail]');if(tl)tl.remove();}
+      if(m.quota){let q=it.querySelector('[data-quota]');if(!q){q=el('div','sub');q.dataset.quota='1';it.appendChild(q);}q.textContent='cota medida: '+fmtUnit(m.quota.amount,m.quota.unit);}
       if(m.logFile){let lf=it.querySelector('[data-log]');if(!lf){lf=el('div','sub');lf.dataset.log='1';it.appendChild(lf);}lf.textContent='log: '+m.logFile;}
       scroll();
+    }
+    else if(m.type==='execOutput'){
+      if(!execCard)return;const it=execCard.querySelector('[data-id="'+m.id+'"]');
+      if(!it)return;let tl=it.querySelector('[data-tail]');
+      if(!tl){tl=el('div','tail');tl.dataset.tail='1';it.appendChild(tl);}
+      tl.textContent=m.tail;scroll();
     }
     else if(m.type==='gate2'){
       const c=card();c.appendChild(el('h4',null,'Gate 2: '+m.id));
       c.appendChild(el('div','sub','Revisao necessaria: '+(m.reasons||[]).join(', ')));
+      if(m.verdict) c.appendChild(el('div','sub','Revisor automatico ('+m.verdict.reviewer+'): '+(m.verdict.ok?'✓ aprovou':'✗ reprovou')+' — '+m.verdict.summary));
     }
     else if(m.type==='summary'){
-      const c=card();c.appendChild(el('h4',null,m.status==='concluida'?'✓ Tarefa concluida':'Tarefa: '+m.status));
-      c.appendChild(el('div','sub',m.done+' de '+m.total+' etapa(s) concluida(s)'));
+      const c=card();
+      const title=m.cancelled?'Execucao cancelada':(m.status==='concluida'?'✓ Tarefa concluida':'Tarefa: '+m.status);
+      c.appendChild(el('h4',null,title));
+      c.appendChild(el('div','sub',m.done+' de '+m.total+' etapa(s) concluida(s)'+(m.failed?(' · '+m.failed+' falhou/bloqueada(s)'):'')));
+      if(m.measured&&m.measured.length){
+        c.appendChild(el('div','sub','Cota real medida: '+m.measured.map(x=>x.id+' '+fmtUnit(x.amount,x.unit)).join(' · ')));
+      }
+      (m.verdicts||[]).forEach(v=>{
+        c.appendChild(el('div','sub','Revisor ('+v.id+'): '+(v.ok?'✓':'✗')+' '+v.summary));
+      });
+      if(m.canReplan){
+        const btns=el('div','cardBtns');
+        const rb=el('button','btn primary','↻ Replanejar falhas');
+        rb.onclick=()=>{btns.remove();vscode.postMessage({type:'replanFailed'});};
+        btns.appendChild(rb);c.appendChild(btns);
+      }
     }
     else if(m.type==='installed'){
       installed=m.engines||[];selEngine.innerHTML='';

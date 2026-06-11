@@ -3,6 +3,7 @@
 // Executa tarefas via CLI local, respeitando o DAG (paralelo onde independente)
 // e os gates HITL (Gate 1 obrigatorio antes de qualquer execucao).
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.ExecutionController = void 0;
 exports.executePlan = executePlan;
 const child_process_1 = require("child_process");
 /**
@@ -24,17 +25,40 @@ function killTree(child) {
         child.kill("SIGTERM");
     }
 }
-function runBuilt(taskId, built, cwd, timeoutSec) {
+/**
+ * Controlador de execucao: permite cancelar tudo que esta rodando (mata as
+ * arvores de processo) e impede novos disparos.
+ */
+class ExecutionController {
+    constructor() {
+        this._cancelled = false;
+        this.children = new Set();
+    }
+    get cancelled() { return this._cancelled; }
+    cancel() {
+        this._cancelled = true;
+        for (const c of this.children)
+            killTree(c);
+    }
+    /** uso interno do executor */
+    track(child) {
+        this.children.add(child);
+        child.on("close", () => this.children.delete(child));
+    }
+}
+exports.ExecutionController = ExecutionController;
+function runBuilt(taskId, built, cwd, timeoutSec, hooks = {}) {
     return new Promise((resolve) => {
         const start = Date.now();
         // detached cria um process group proprio no POSIX, permitindo matar a arvore.
         const child = (0, child_process_1.spawn)(built.command, { cwd, shell: true, detached: process.platform !== "win32" });
+        hooks.controller?.track(child);
         let stdout = "";
         let stderr = "";
         let timedOut = false;
         const timer = setTimeout(() => { timedOut = true; killTree(child); }, timeoutSec * 1000);
-        child.stdout?.on("data", (d) => (stdout += d.toString()));
-        child.stderr?.on("data", (d) => (stderr += d.toString()));
+        child.stdout?.on("data", (d) => { const s = d.toString(); stdout += s; hooks.onOutput?.(taskId, s); });
+        child.stderr?.on("data", (d) => { const s = d.toString(); stderr += s; hooks.onOutput?.(taskId, s); });
         if (built.inputMode === "stdin" && built.stdinPayload) {
             child.stdin?.write(built.stdinPayload);
             child.stdin?.end();
@@ -44,9 +68,19 @@ function runBuilt(taskId, built, cwd, timeoutSec) {
         }
         child.on("close", (code) => {
             clearTimeout(timer);
+            const cancelled = hooks.controller?.cancelled === true;
             if (timedOut)
                 stderr += `\n[coorq] tarefa interrompida por timeout (${timeoutSec}s)`;
-            resolve({ taskId, code: timedOut ? 124 : (code ?? 1), stdout, stderr, durationMs: Date.now() - start, timedOut });
+            if (cancelled)
+                stderr += "\n[coorq] execucao cancelada pelo usuario";
+            resolve({
+                taskId,
+                code: cancelled ? 130 : timedOut ? 124 : (code ?? 1),
+                stdout, stderr,
+                durationMs: Date.now() - start,
+                timedOut,
+                cancelled,
+            });
         });
     });
 }
@@ -68,10 +102,11 @@ async function executePlan(opts) {
     }
     const results = [];
     const running = new Map();
+    const hooks = { controller: opts.controller, onOutput: opts.onOutput };
     // loop ate todas concluidas/rejeitadas/bloqueadas
     while (true) {
-        // dispara prontas ate o limite de concorrencia
-        let ready = readyTasks(opts.tasks);
+        // dispara prontas ate o limite de concorrencia (cancelado = nao dispara mais)
+        let ready = opts.controller?.cancelled ? [] : readyTasks(opts.tasks);
         while (running.size < opts.maxParallel && ready.length > 0) {
             const t = ready.shift();
             t.status = "executando";
@@ -81,14 +116,15 @@ async function executePlan(opts) {
             t.redactedCommand = built.redactedCommand;
             t.specFile = built.specFile;
             const runner = opts.runFn || runBuilt;
-            const p = runner(t.id, built, opts.cwd, opts.execTimeoutSec).then((r) => {
+            const p = runner(t.id, built, opts.cwd, opts.execTimeoutSec, hooks).then((r) => {
                 t.status = r.code === 0 ? "revisao" : "rejeitada";
+                t.cancelled = r.cancelled || undefined;
                 t.log = (r.stdout + "\n" + r.stderr).slice(-4000);
                 opts.onUpdate(t);
                 return r;
             });
             running.set(t.id, p);
-            ready = readyTasks(opts.tasks);
+            ready = opts.controller?.cancelled ? [] : readyTasks(opts.tasks);
         }
         if (running.size === 0)
             break; // nada rodando e nada pronto -> fim
@@ -96,13 +132,15 @@ async function executePlan(opts) {
         running.delete(finished.taskId);
         results.push(finished);
     }
-    // dependentes de tarefas rejeitadas nunca ficam prontos: marca como bloqueada
-    // em vez de deixa-los presos em "aprovada" silenciosamente.
+    // dependentes de tarefas rejeitadas (ou restantes pos-cancelamento) nunca ficam
+    // prontos: marca como bloqueada em vez de deixa-los presos em "aprovada".
     for (const t of opts.tasks) {
         if (t.status === "aprovada") {
             t.status = "bloqueada";
-            t.log = ((t.log || "") + "\n[coorq] bloqueada: dependencia nao concluida (" +
-                t.dependsOn.join(", ") + ")").trim();
+            const why = opts.controller?.cancelled
+                ? "execucao cancelada pelo usuario"
+                : `dependencia nao concluida (${t.dependsOn.join(", ")})`;
+            t.log = ((t.log || "") + `\n[coorq] bloqueada: ${why}`).trim();
             opts.onUpdate(t);
         }
     }

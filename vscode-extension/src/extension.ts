@@ -12,6 +12,8 @@ import { DemandStore } from "./core/demandStore";
 import { buildPlannerPrompt, parsePlan, runPlanner } from "./core/planner";
 import { validatePlan } from "./core/planValidation";
 import { importPack, readManifest } from "./core/agentPacks";
+import { HistoryStore } from "./core/historyStore";
+import { quotaDashboardMarkdown } from "./core/quotaDashboard";
 import { gate1PlanCost, gate2Delivery } from "./ui/gates";
 import { DemandNode, DemandsProvider, EnginesProvider, TaskNode } from "./ui/trees";
 import { taskDetailMarkdown } from "./core/taskDetails";
@@ -140,16 +142,60 @@ export function activate(context: vscode.ExtensionContext) {
         "Reexecutar"
       );
       if (approved !== "Reexecutar") return;
+      const c = cfg();
+      const conf = ensureWorkspaceConfig() || new CoorqConfig(c.root, c.configDir);
+
+      // permite trocar o assistente na reexecucao; divergencia vira telemetria
+      // de roteamento (sinal para evoluir as regras de best_for).
+      try {
+        const ef = conf.loadEngines();
+        const ids = Object.keys(ef.engines).filter((id) => ef.engines[id].enabled !== false);
+        const keep = `$(check) Manter ${task.engine || "(sem assistente)"}`;
+        const pick = await vscode.window.showQuickPick(
+          [keep, ...ids.filter((id) => id !== task.engine).map((id) => `Trocar para ${id}`)],
+          { placeHolder: "Assistente para a reexecucao" }
+        );
+        if (!pick) return;
+        if (pick !== keep) {
+          const chosen = pick.replace("Trocar para ", "");
+          const chosenCfg = ef.engines[chosen];
+          new HistoryStore(path.join(c.root, c.configDir, "state", "history.json")).appendRoutingOverride({
+            at: new Date().toISOString(),
+            taskId: task.id,
+            context: "rerun",
+            suggestedEngine: task.engine,
+            suggestedModel: task.model,
+            chosenEngine: chosen,
+            chosenModel: chosenCfg?.default_model,
+            reason: "troca manual na reexecucao",
+          });
+          task.engine = chosen;
+          task.model = chosenCfg?.default_model || task.model;
+          if (task.power && !(chosenCfg?.powers || []).includes(task.power)) task.power = "normal";
+        }
+      } catch { /* sem engines.yaml legivel: segue com o engine atual */ }
+
       task.status = "planejada";
       task.log = undefined;
       task.logFile = undefined;
       task.durationMs = undefined;
       demand.status = "aguardando-gate1";
-      const c = cfg();
-      const conf = ensureWorkspaceConfig() || new CoorqConfig(c.root, c.configDir);
       new DemandStore(conf.statePath()).upsert(demand);
       demandsProvider.refresh();
       vscode.window.showInformationMessage(`Tarefa ${task.id} marcada para reexecucao. Rode "Revisar e executar tarefa".`);
+    }),
+    vscode.commands.registerCommand("coorq.quotaDashboard", async () => {
+      const c = cfg();
+      if (!c.root) { vscode.window.showErrorMessage("Abra um projeto no VS Code."); return; }
+      const conf = ensureWorkspaceConfig() || new CoorqConfig(c.root, c.configDir);
+      let ef = conf.loadEngines();
+      ef = applyCliDiscoveryToEnginesFile(ef, await discoverInstalledClis(ef.defaults?.probe_timeout_seconds || 10, ef));
+      const snaps = await probeAll(ef);
+      const history = new HistoryStore(path.join(c.root, c.configDir, "state", "history.json"));
+      const md = quotaDashboardMarkdown(snaps, history.load().executions);
+      const doc = await vscode.workspace.openTextDocument({ content: md, language: "markdown" });
+      await vscode.window.showTextDocument(doc, { preview: true });
+      await vscode.commands.executeCommand("markdown.showPreview", doc.uri).then(undefined, () => { /* preview opcional */ });
     }),
     vscode.commands.registerCommand("coorq.copyDemandSummary", async (node?: DemandNode) => {
       const d = node?.demand;

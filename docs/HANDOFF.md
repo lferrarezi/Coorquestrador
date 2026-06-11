@@ -43,7 +43,7 @@ Separação entre DETERMINISMO e RACIOCÍNIO:
   squad não consegue quebrar a capacidade principal.
 
 ## FORMATO ATUAL
-Extensão do VSCode (versão 1.1.1 pre-release). Repositório:
+Extensão do VSCode (versão 1.3.0 pre-release). Repositório:
 github.com/lferrarezi/Coorquestrador (branch main). O escopo atual é exclusivamente
 VS Code; formatos externos foram descartados.
 
@@ -127,11 +127,40 @@ coorq.maxParallel, coorq.requireGate1.
 ## ESTADO ATUAL / O QUE JÁ FUNCIONA
 - Pipeline validado ponta-a-ponta: planejar (claude) → rotear → executar (criou
   arquivo real). 5 assistentes respondem (claude, codex, devin, gemini, copilot).
-- Build 1.1.1 pre-release, empacotada e instalavel (.vsix).
+- Build 1.3.0 pre-release, empacotada e instalavel (.vsix).
 - Convenção de versão: minor impar e trilha pre-release (0.1.x, 0.3.x);
   minor par e release final (0.2.x, 0.4.x, 1.0.x). Correcoes menores incrementam patch
   dentro da mesma trilha.
 - Repositório versiona dist/ e os .vsix.
+
+## CICLO DE COTA E QUALIDADE (1.3.0)
+- COTA REAL MEDIDA: `usageParser.ts` extrai consumo real do stdout (claude JSON
+  usage, codex "tokens used", `usage_parse` declarável por engine). Alimenta
+  `realQuota` (flag `realQuotaMeasured`) e o historico `state/history.json`.
+- HISTÓRICO/CALIBRAÇÃO: `historyStore.ts` agrega consumo por assistente e compara
+  estimado vs mediana medida por tamanho (`calibrationBySize`) — base para
+  recalibrar `task_size_*` com dados reais.
+- DASHBOARD DE COTA: comando "Coorquestrador: Dashboard de cota" (ícone 📊 do chat)
+  gera markdown com cota restante (probe), consumo acumulado, calibração e últimas
+  execuções (`quotaDashboard.ts`).
+- RE-ROTEAMENTO POR COTA (pré-Gate 1): `rerouting.ts` — se o assistente roteado
+  está esgotado/indisponível, a tarefa migra deterministicamente para o melhor
+  elegível (best_for + cota); sem elegível → bloqueada antes de gastar. Aviso no
+  card do plano; registrado como telemetria.
+- REPLANEJAMENTO PARCIAL: após falhas, botão "Replanejar falhas" envia ao
+  planejador SÓ o subgrafo rejeitado/bloqueado + logs de erro, preservando as
+  concluídas (`splitForReplan`/`buildReplanPrompt`/`mergeReplanned` em planner.ts).
+- REVISOR AUTOMATIZADO (pré-Gate 2): `reviewer.ts` roda um assistente barato
+  (haiku/flash/low) comparando o log da execução com o critério de aceite;
+  parecer (VEREDITO/RESUMO) aparece no Gate 2 e no resumo. Best-effort: falha do
+  revisor nunca quebra o fluxo.
+- STREAMING + CANCELAMENTO: executor emite stdout ao vivo (tail no card, throttle
+  500ms) e `ExecutionController` permite "■ Parar" (mata a árvore de processos;
+  pendentes viram bloqueadas).
+- TELEMETRIA DE ROTEAMENTO: `history.json#routingOverrides` registra re-rotes por
+  cota e trocas manuais de assistente na reexecução — sinal para evoluir best_for.
+- CACHE DE PROBE: `probeAll` reusa snapshots por 60s (force no comando manual).
+- CI DE PR: `.github/workflows/ci.yml` roda `release:check` em todo PR/push na main.
 
 ## BUGS JÁ CORRIGIDOS (não reintroduzir)
 - Shell-safety: prompt em input_mode=arg deve usar ASPAS SIMPLES (shellQuote), nunca
