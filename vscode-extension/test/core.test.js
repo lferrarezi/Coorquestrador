@@ -11,7 +11,7 @@ const { DemandStore } = require("../dist/core/demandStore");
 const { CoorqConfig } = require("../dist/core/config");
 const { buildCommand } = require("../dist/core/commandBuilder");
 const { ensureInsideDir, redactCommand, redactSecrets, validateExecTemplate } = require("../dist/core/commandSecurity");
-const { discoverInstalledClis, discoverModels, resolveBinPath } = require("../dist/core/prober");
+const { discoverInstalledClis, discoverModels, resolveBinPath, probeAll, invalidateProbeCache } = require("../dist/core/prober");
 const { gate2ReasonsForTask } = require("../dist/core/executionService");
 const { taskDetailMarkdown } = require("../dist/core/taskDetails");
 
@@ -123,6 +123,61 @@ async function test(name, fn) {
     });
     assert.deepEqual(order, ["T1", "T2"]);
     assert.equal(tasks[1].status, "revisao");
+  });
+
+  await test("executePlan blocks dependents of rejected tasks", async () => {
+    const tasks = [task("T1"), task("T2", ["T1"]), task("T3")];
+    tasks.forEach((t) => { t.status = "aprovada"; });
+    const updates = [];
+    await executePlan({
+      tasks,
+      cwd: process.cwd(),
+      maxParallel: 2,
+      execTimeoutSec: 1,
+      gate1Approved: true,
+      buildFn: () => ({ command: "noop", redactedCommand: "noop", inputMode: "arg" }),
+      runFn: async (taskId) => ({ taskId, code: taskId === "T1" ? 1 : 0, stdout: "", stderr: "", durationMs: 1 }),
+      onUpdate: (t) => updates.push(`${t.id}:${t.status}`),
+    });
+    assert.equal(tasks[0].status, "rejeitada");
+    assert.equal(tasks[1].status, "bloqueada");
+    assert.ok(tasks[1].log.includes("dependencia nao concluida"));
+    assert.equal(tasks[2].status, "revisao");
+    assert.ok(updates.includes("T2:bloqueada"));
+  });
+
+  await test("executePlan marks timeout with code 124 and kills the process tree", async () => {
+    if (process.platform === "win32") return; // usa sleep/sh do POSIX
+    const tasks = [task("T1")];
+    tasks[0].status = "aprovada";
+    const results = await executePlan({
+      tasks,
+      cwd: process.cwd(),
+      maxParallel: 1,
+      execTimeoutSec: 1,
+      gate1Approved: true,
+      buildFn: () => ({ command: "sh -c 'sleep 30'", redactedCommand: "sleep", inputMode: "arg" }),
+      onUpdate: () => {},
+    });
+    assert.equal(results[0].code, 124);
+    assert.equal(results[0].timedOut, true);
+    assert.ok(results[0].stderr.includes("timeout"));
+    assert.equal(tasks[0].status, "rejeitada");
+    assert.ok(results[0].durationMs < 5000, "deve encerrar logo apos o timeout, nao apos o sleep");
+  });
+
+  await test("probeAll caches snapshots within TTL and force bypasses", async () => {
+    invalidateProbeCache();
+    const ef = baseEngines();
+    ef.engines.codex.probe = { command: "true", expect_exit_code: 0 };
+    const a = await probeAll(ef);
+    const b = await probeAll(ef);            // cache hit: mesmo array
+    assert.equal(a, b);
+    const c = await probeAll(ef, { force: true });
+    assert.notEqual(b, c);                   // force re-executa
+    const d = await probeAll(ef, { cacheTtlMs: 0 });
+    assert.notEqual(c, d);                   // ttl 0 desativa cache
+    invalidateProbeCache();
   });
 
   await test("DemandStore writes atomically and loads saved demand", () => {

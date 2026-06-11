@@ -36,6 +36,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.probeEngine = probeEngine;
+exports.invalidateProbeCache = invalidateProbeCache;
 exports.probeAll = probeAll;
 exports.resolveBinPath = resolveBinPath;
 exports.discoverModels = discoverModels;
@@ -116,10 +117,27 @@ async function probeEngine(id, cfg, timeoutSec) {
     }
     return { id, state, creditRemaining, probedAt: now, detail };
 }
-async function probeAll(enginesFile) {
+const DEFAULT_PROBE_TTL_MS = 60000;
+let probeCache = null;
+function probeCacheKey(enginesFile, ids) {
+    return ids.map((id) => {
+        const e = enginesFile.engines[id];
+        return `${id}|${e.probe?.command || ""}|${e.credit_probe?.command || ""}`;
+    }).join("\n");
+}
+/** Limpa o cache de probes (testes / pos-edicao de engines.yaml). */
+function invalidateProbeCache() { probeCache = null; }
+async function probeAll(enginesFile, opts = {}) {
     const t = enginesFile.defaults.probe_timeout_seconds;
     const ids = Object.keys(enginesFile.engines).filter((id) => enginesFile.engines[id].enabled !== false);
-    return Promise.all(ids.map((id) => probeEngine(id, enginesFile.engines[id], t)));
+    const ttl = opts.cacheTtlMs ?? DEFAULT_PROBE_TTL_MS;
+    const key = probeCacheKey(enginesFile, ids);
+    if (!opts.force && ttl > 0 && probeCache && probeCache.key === key && Date.now() - probeCache.at < ttl) {
+        return probeCache.snaps;
+    }
+    const snaps = await Promise.all(ids.map((id) => probeEngine(id, enginesFile.engines[id], t)));
+    probeCache = { key, at: Date.now(), snaps };
+    return snaps;
 }
 const KNOWN_CLIS = [
     {

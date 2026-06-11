@@ -273,7 +273,7 @@ export function activate(context: vscode.ExtensionContext) {
       ef = applyCliDiscoveryToEnginesFile(ef, discovered);
       out.appendLine(`CLIs instalados: ${discovered.filter((cli) => cli.installed).map((cli) => cli.id).join(", ") || "(nenhum)"}`);
       out.appendLine("Probing engines...");
-      const snaps = await probeAll(ef);
+      const snaps = await probeAll(ef, { force: true });
       for (const s of snaps) out.appendLine(`  ${s.id}: ${s.state} (cota=${s.creditRemaining != null ? s.creditRemaining + "%" : "n/d"}) ${s.detail}`);
       const ok = eligible(snaps, ef.defaults.min_credit_threshold);
       out.appendLine(`Elegiveis para roteamento: ${ok.map((s) => s.id).join(", ") || "(nenhum)"}`);

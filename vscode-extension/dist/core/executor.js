@@ -5,25 +5,48 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.executePlan = executePlan;
 const child_process_1 = require("child_process");
+/**
+ * Mata a arvore de processos inteira, nao so o shell intermediario.
+ * Com shell:true, kill() simples deixa a CLI orfa rodando (e consumindo cota).
+ */
+function killTree(child) {
+    if (process.platform === "win32") {
+        child.kill();
+        return;
+    }
+    try {
+        if (child.pid)
+            process.kill(-child.pid, "SIGTERM");
+        else
+            child.kill("SIGTERM");
+    }
+    catch {
+        child.kill("SIGTERM");
+    }
+}
 function runBuilt(taskId, built, cwd, timeoutSec) {
     return new Promise((resolve) => {
         const start = Date.now();
-        const child = (0, child_process_1.spawn)(built.command, { cwd, shell: true });
+        // detached cria um process group proprio no POSIX, permitindo matar a arvore.
+        const child = (0, child_process_1.spawn)(built.command, { cwd, shell: true, detached: process.platform !== "win32" });
         let stdout = "";
         let stderr = "";
-        const timer = setTimeout(() => child.kill("SIGTERM"), timeoutSec * 1000);
-        child.stdout.on("data", (d) => (stdout += d.toString()));
-        child.stderr.on("data", (d) => (stderr += d.toString()));
+        let timedOut = false;
+        const timer = setTimeout(() => { timedOut = true; killTree(child); }, timeoutSec * 1000);
+        child.stdout?.on("data", (d) => (stdout += d.toString()));
+        child.stderr?.on("data", (d) => (stderr += d.toString()));
         if (built.inputMode === "stdin" && built.stdinPayload) {
-            child.stdin.write(built.stdinPayload);
-            child.stdin.end();
+            child.stdin?.write(built.stdinPayload);
+            child.stdin?.end();
         }
         else {
-            child.stdin.end();
+            child.stdin?.end();
         }
         child.on("close", (code) => {
             clearTimeout(timer);
-            resolve({ taskId, code: code ?? 1, stdout, stderr, durationMs: Date.now() - start });
+            if (timedOut)
+                stderr += `\n[coorq] tarefa interrompida por timeout (${timeoutSec}s)`;
+            resolve({ taskId, code: timedOut ? 124 : (code ?? 1), stdout, stderr, durationMs: Date.now() - start, timedOut });
         });
     });
 }
@@ -72,6 +95,16 @@ async function executePlan(opts) {
         const finished = await Promise.race(running.values());
         running.delete(finished.taskId);
         results.push(finished);
+    }
+    // dependentes de tarefas rejeitadas nunca ficam prontos: marca como bloqueada
+    // em vez de deixa-los presos em "aprovada" silenciosamente.
+    for (const t of opts.tasks) {
+        if (t.status === "aprovada") {
+            t.status = "bloqueada";
+            t.log = ((t.log || "") + "\n[coorq] bloqueada: dependencia nao concluida (" +
+                t.dependsOn.join(", ") + ")").trim();
+            opts.onUpdate(t);
+        }
     }
     return results;
 }
