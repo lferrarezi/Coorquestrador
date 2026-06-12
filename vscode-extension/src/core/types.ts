@@ -31,7 +31,7 @@ export interface EngineConfig {
 export interface EngineSnapshot {
   id: string;
   state: EngineState;
-  creditRemaining: number | null; // fracao 0..1 quando conhecida, ou valor absoluto
+  creditRemaining: number | null; // percentual 0..100 quando conhecido
   probedAt: string;               // ISO timestamp
   detail: string;
 }

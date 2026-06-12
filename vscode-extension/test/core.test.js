@@ -6,7 +6,7 @@ const os = require("os");
 const path = require("path");
 const { validatePlan } = require("../dist/core/planValidation");
 const { estimateDemandQuota } = require("../dist/core/estimator");
-const { executePlan, ExecutionController } = require("../dist/core/executor");
+const { executePlan, ExecutionController, windowsTaskkillArgs } = require("../dist/core/executor");
 const { measureUsage } = require("../dist/core/usageParser");
 const { rerouteForQuota } = require("../dist/core/rerouting");
 const { HistoryStore, consumptionByEngine, calibrationBySize } = require("../dist/core/historyStore");
@@ -91,6 +91,18 @@ async function test(name, fn) {
     assert.equal(result.valid, false);
     assert.ok(result.errors.some((e) => e.includes("modelo invalido")));
     assert.ok(result.errors.some((e) => e.includes("ciclo")));
+  });
+
+  await test("validatePlan accepts dependencies already satisfied by completed tasks", () => {
+    const tasks = [task("T2", ["T1"] )];
+    const result = validatePlan(
+      tasks,
+      baseEngines(),
+      [{ id: "codex", state: "disponivel", creditRemaining: 90, probedAt: "now", detail: "" }],
+      5,
+      new Set(["T1"])
+    );
+    assert.equal(result.valid, true);
   });
 
   await test("estimateDemandQuota aggregates by engine and unit", () => {
@@ -358,6 +370,11 @@ async function test(name, fn) {
     assert.deepEqual(measureUsage(cfg, "blah consumo=777 blah"), { unit: "token", amount: 777 });
   });
 
+  await test("measureUsage accepts numeric strings from declared json paths", () => {
+    const cfg = { ...baseEngines().engines.codex, usage_parse: { parse: "json", json_path: "$.usage.total" } };
+    assert.deepEqual(measureUsage(cfg, JSON.stringify({ usage: { total: "1,234" } })), { unit: "token", amount: 1234 });
+  });
+
   await test("rerouteForQuota moves task off exhausted engine and blocks when none eligible", () => {
     const ef = baseEngines();
     ef.engines.backup = { ...ef.engines.codex, bin: "backup", best_for: ["coding"], models: ["m1"], default_model: "m1" };
@@ -378,6 +395,28 @@ async function test(name, fn) {
     const changes2 = rerouteForQuota([t2], baseEngines(), noneEligible, 5);
     assert.equal(changes2.length, 0);
     assert.equal(t2.status, "bloqueada");
+    assert.equal(t2.engine, undefined);
+    assert.equal(t2.model, undefined);
+    assert.equal(t2.power, undefined);
+  });
+
+  await test("rerouteForQuota selects effort supported by the replacement model", () => {
+    const ef = baseEngines();
+    ef.engines.backup = {
+      ...ef.engines.codex,
+      models: ["fast"],
+      default_model: "fast",
+      powers: ["low", "normal", "high"],
+      model_powers: { fast: ["low"] },
+    };
+    const t = { ...task("T-power"), power: "high" };
+    rerouteForQuota([t], ef, [
+      { id: "codex", state: "sem-credito", creditRemaining: 0, probedAt: "now", detail: "" },
+      { id: "backup", state: "disponivel", creditRemaining: 90, probedAt: "now", detail: "" },
+    ], 5);
+    assert.equal(t.engine, "backup");
+    assert.equal(t.model, "fast");
+    assert.equal(t.power, "low");
   });
 
   await test("history store aggregates consumption and calibration", () => {
@@ -447,6 +486,38 @@ async function test(name, fn) {
     assert.deepEqual(ids, ["T1", "T1-r", "T3"]);           // colisao com concluida ganha sufixo
     assert.equal(merged.tasks.find((t) => t.id === "T1").status, "concluida");
     assert.equal(merged.status, "aguardando-gate1");
+  });
+
+  await test("partial replan remaps dependencies when a new id collides with completed work", () => {
+    const done = { ...task("T1"), status: "concluida" };
+    const failed = { ...task("T2", ["T1"]), status: "rejeitada" };
+    const demand = { id: "D2", project: ".", title: "Demo", description: "desc", createdAt: "now", status: "bloqueada", tasks: [done, failed] };
+    const merged = mergeReplanned(demand, [
+      { ...task("T1"), status: "planejada" },
+      { ...task("T3", ["T1"]), status: "planejada" },
+    ]);
+    assert.equal(merged.tasks.find((t) => t.id === "T3").dependsOn[0], "T1-r");
+  });
+
+  await test("windows cancellation targets the full process tree", () => {
+    assert.deepEqual(windowsTaskkillArgs(4321), ["/pid", "4321", "/T", "/F"]);
+  });
+
+  await test("executePlan rejects a task when command construction fails", async () => {
+    const tasks = [task("T-build")];
+    tasks[0].status = "aprovada";
+    const results = await executePlan({
+      tasks,
+      cwd: process.cwd(),
+      maxParallel: 1,
+      execTimeoutSec: 1,
+      gate1Approved: true,
+      buildFn: () => { throw new Error("config invalida"); },
+      onUpdate: () => {},
+    });
+    assert.equal(results.length, 0);
+    assert.equal(tasks[0].status, "rejeitada");
+    assert.ok(tasks[0].log.includes("config invalida"));
   });
 
   await test("execution controller cancels pending tasks", async () => {

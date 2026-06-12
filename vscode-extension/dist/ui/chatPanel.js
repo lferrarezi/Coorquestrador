@@ -52,6 +52,7 @@ const executionService_1 = require("../core/executionService");
 const executor_1 = require("../core/executor");
 const rerouting_1 = require("../core/rerouting");
 const historyStore_1 = require("../core/historyStore");
+const commandSecurity_1 = require("../core/commandSecurity");
 const gates_1 = require("./gates");
 const SELECTION_KEY = "coorq.chat.selection";
 class ChatPanelProvider {
@@ -301,7 +302,12 @@ class ChatPanelProvider {
      * card do Gate 1. Compartilhada entre planejamento e replanejamento parcial.
      */
     routeEstimateAndPresent(demand, ef, cost, snaps, store, conf, note) {
-        const validation = (0, planValidation_1.validatePlan)(demand.tasks.filter((t) => t.status !== "concluida"), ef, snaps);
+        const pending = demand.tasks.filter((t) => t.status !== "concluida");
+        // Re-roteia antes da validacao de disponibilidade: o objetivo desta etapa e
+        // justamente reparar engines sem cota/offline produzidos pelo planejador.
+        const reroutes = (0, rerouting_1.rerouteForQuota)(pending, ef, snaps);
+        const completedIds = new Set(demand.tasks.filter((t) => t.status === "concluida").map((t) => t.id));
+        const validation = (0, planValidation_1.validatePlan)(pending, ef, snaps, ef.defaults.min_credit_threshold, completedIds);
         if (!validation.valid) {
             demand.status = "nova";
             store.upsert(demand);
@@ -310,9 +316,6 @@ class ChatPanelProvider {
             return;
         }
         validation.warnings.forEach((w) => this.deps.log(`[plan-warning] ${w}`));
-        // re-roteamento deterministico por cota (pre-Gate 1)
-        const pending = demand.tasks.filter((t) => t.status !== "concluida");
-        const reroutes = (0, rerouting_1.rerouteForQuota)(pending, ef, snaps);
         if (reroutes.length) {
             const history = new historyStore_1.HistoryStore(path.join(this.deps.cfg().root, this.deps.cfg().configDir, "state", "history.json"));
             for (const r of reroutes) {
@@ -446,7 +449,7 @@ class ChatPanelProvider {
                 gate1Approved: true,
                 controller: this.controller,
                 onOutput: (taskId, chunk) => {
-                    const cur = (tails.get(taskId) || "") + chunk;
+                    const cur = (tails.get(taskId) || "") + (0, commandSecurity_1.redactSecrets)(chunk);
                     tails.set(taskId, cur.slice(-400));
                 },
                 onUpdate: ({ task }) => {

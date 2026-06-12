@@ -4,6 +4,7 @@
 // e os gates HITL (Gate 1 obrigatorio antes de qualquer execucao).
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ExecutionController = void 0;
+exports.windowsTaskkillArgs = windowsTaskkillArgs;
 exports.executePlan = executePlan;
 const child_process_1 = require("child_process");
 /**
@@ -12,7 +13,18 @@ const child_process_1 = require("child_process");
  */
 function killTree(child) {
     if (process.platform === "win32") {
-        child.kill();
+        if (!child.pid) {
+            child.kill();
+            return;
+        }
+        const killer = (0, child_process_1.spawn)("taskkill", windowsTaskkillArgs(child.pid), { windowsHide: true, shell: false });
+        const fallback = () => { try {
+            child.kill();
+        }
+        catch { /* processo ja encerrou */ } };
+        killer.once("error", fallback);
+        killer.once("close", (code) => { if (code !== 0)
+            fallback(); });
         return;
     }
     try {
@@ -24,6 +36,9 @@ function killTree(child) {
     catch {
         child.kill("SIGTERM");
     }
+}
+function windowsTaskkillArgs(pid) {
+    return ["/pid", String(pid), "/T", "/F"];
 }
 /**
  * Controlador de execucao: permite cancelar tudo que esta rodando (mata as
@@ -111,7 +126,17 @@ async function executePlan(opts) {
             const t = ready.shift();
             t.status = "executando";
             opts.onUpdate(t);
-            const built = opts.buildFn(t);
+            let built;
+            try {
+                built = opts.buildFn(t);
+            }
+            catch (e) {
+                t.status = "rejeitada";
+                t.log = `[coorq] falha ao montar comando: ${String(e?.message || e)}`;
+                opts.onUpdate(t);
+                ready = opts.controller?.cancelled ? [] : readyTasks(opts.tasks);
+                continue;
+            }
             t.command = built.command;
             t.redactedCommand = built.redactedCommand;
             t.specFile = built.specFile;

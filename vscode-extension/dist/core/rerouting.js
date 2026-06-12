@@ -14,9 +14,10 @@ function pickModelFor(engineId, ef, preferred) {
         return preferred;
     return cfg.default_model || cfg.models[0] || "";
 }
-function pickPowerFor(engineId, ef, preferred) {
+function pickPowerFor(engineId, model, ef, preferred) {
     const cfg = ef.engines[engineId];
-    const powers = cfg?.powers?.length ? cfg.powers : ["normal"];
+    const modelPowers = cfg?.model_powers?.[model];
+    const powers = modelPowers?.length ? modelPowers : cfg?.powers?.length ? cfg.powers : ["normal"];
     if (preferred && powers.includes(preferred))
         return preferred;
     return powers.includes("normal") ? "normal" : powers[0];
@@ -65,13 +66,17 @@ function rerouteForQuota(tasks, ef, snapshots, minThreshold = ef.defaults.min_cr
             // ninguem elegivel: bloqueia em vez de queimar cota de um engine esgotado
             t.status = "bloqueada";
             t.log = ((t.log || "") + `\n[coorq] bloqueada pre-execucao: ${reason} e nenhum assistente elegivel`).trim();
+            t.engine = undefined;
+            t.model = undefined;
+            t.power = undefined;
+            t.rerouted = undefined;
             continue;
         }
         const from = t.engine;
         t.rerouted = { from, reason };
         t.engine = best.id;
         t.model = pickModelFor(best.id, ef, t.model);
-        t.power = pickPowerFor(best.id, ef, t.power);
+        t.power = pickPowerFor(best.id, t.model, ef, t.power);
         changes.push({ task: t, from, to: best.id, reason });
     }
     return changes;

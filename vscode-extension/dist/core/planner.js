@@ -134,13 +134,18 @@ function mergeReplanned(demand, replanned) {
     const keep = demand.tasks.filter((t) => t.status === "concluida");
     const keepIds = new Set(keep.map((t) => t.id));
     const seen = new Set(keepIds);
+    const remappedIds = new Map();
     const fresh = replanned.map((t) => {
         let id = t.id;
         while (seen.has(id))
             id = `${id}-r`;
         seen.add(id);
+        remappedIds.set(t.id, id);
         return { ...t, id };
     });
+    for (const task of fresh) {
+        task.dependsOn = task.dependsOn.map((id) => remappedIds.get(id) || id);
+    }
     // dependencias para IDs concluidos permanecem validas (executor as considera satisfeitas)
     demand.tasks = [...keep, ...fresh];
     demand.status = "aguardando-gate1";

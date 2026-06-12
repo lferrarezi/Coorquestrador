@@ -21,6 +21,14 @@ function jsonPathValue(obj: any, expr: string): any {
   return cur;
 }
 
+function parsePositiveNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : null;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().replace(/[.,](?=\d{3}\b)/g, "").replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 /** Procura o ultimo objeto JSON parseavel no stdout (CLIs imprimem o resultado ao final). */
 function lastJsonObject(stdout: string): any | null {
   const trimmed = stdout.trim();
@@ -81,13 +89,14 @@ export function measureUsage(cfg: EngineConfig | undefined, stdout: string): Mea
     if (up.parse === "json" && up.json_path) {
       const obj = lastJsonObject(stdout);
       const v = obj ? jsonPathValue(obj, up.json_path) : null;
-      if (typeof v === "number" && v > 0) return { unit, amount: v };
+      const n = parsePositiveNumber(v);
+      if (n != null) return { unit, amount: n };
     } else if (up.parse === "regex" && up.pattern) {
       try {
         const m = stdout.match(new RegExp(up.pattern, "i"));
         if (m && m[1]) {
-          const n = Number(m[1].replace(/[.,](?=\d{3}\b)/g, ""));
-          if (Number.isFinite(n) && n > 0) return { unit, amount: n };
+          const n = parsePositiveNumber(m[1]);
+          if (n != null) return { unit, amount: n };
         }
       } catch { /* pattern invalido: cai nos defaults */ }
     }

@@ -121,7 +121,7 @@ async function runDemandExecution(opts) {
         persistTaskLog(logDir, task, result);
         // cota REAL medida do stdout (quando o CLI reporta usage); senao mantem estimativa.
         const engineCfg = task.engine ? opts.enginesFile.engines[task.engine] : undefined;
-        const measured = (0, usageParser_1.measureUsage)(engineCfg, result.stdout);
+        const measured = (0, usageParser_1.measureUsage)(engineCfg, `${result.stdout}\n${result.stderr}`);
         if (measured) {
             task.realQuota = measured.amount;
             task.quotaUnit = measured.unit;

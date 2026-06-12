@@ -41,7 +41,7 @@ function hasCycle(tasks) {
     };
     return tasks.some((t) => visit(t.id));
 }
-function validatePlan(tasks, enginesFile, snapshots, minCreditThreshold = enginesFile.defaults.min_credit_threshold) {
+function validatePlan(tasks, enginesFile, snapshots, minCreditThreshold = enginesFile.defaults.min_credit_threshold, satisfiedDependencyIds = new Set()) {
     const errors = [];
     const warnings = [];
     const ids = new Set();
@@ -102,8 +102,9 @@ function validatePlan(tasks, enginesFile, snapshots, minCreditThreshold = engine
     }
     for (const t of tasks) {
         for (const dep of t.dependsOn || []) {
-            if (!ids.has(dep))
+            if (!ids.has(dep) && !satisfiedDependencyIds.has(dep)) {
                 errors.push(`Tarefa ${t.id} depende de tarefa inexistente: ${dep}.`);
+            }
         }
     }
     if (hasCycle(tasks))

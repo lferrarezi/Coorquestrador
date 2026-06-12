@@ -22,7 +22,11 @@ export interface ExecResult {
  */
 function killTree(child: ReturnType<typeof spawn>) {
   if (process.platform === "win32") {
-    child.kill();
+    if (!child.pid) { child.kill(); return; }
+    const killer = spawn("taskkill", windowsTaskkillArgs(child.pid), { windowsHide: true, shell: false });
+    const fallback = () => { try { child.kill(); } catch { /* processo ja encerrou */ } };
+    killer.once("error", fallback);
+    killer.once("close", (code) => { if (code !== 0) fallback(); });
     return;
   }
   try {
@@ -31,6 +35,10 @@ function killTree(child: ReturnType<typeof spawn>) {
   } catch {
     child.kill("SIGTERM");
   }
+}
+
+export function windowsTaskkillArgs(pid: number): string[] {
+  return ["/pid", String(pid), "/T", "/F"];
 }
 
 /**
@@ -143,7 +151,16 @@ export async function executePlan(opts: {
       const t = ready.shift()!;
       t.status = "executando";
       opts.onUpdate(t);
-      const built = opts.buildFn(t);
+      let built: BuiltCommand;
+      try {
+        built = opts.buildFn(t);
+      } catch (e: any) {
+        t.status = "rejeitada";
+        t.log = `[coorq] falha ao montar comando: ${String(e?.message || e)}`;
+        opts.onUpdate(t);
+        ready = opts.controller?.cancelled ? [] : readyTasks(opts.tasks);
+        continue;
+      }
       t.command = built.command;
       t.redactedCommand = built.redactedCommand;
       t.specFile = built.specFile;

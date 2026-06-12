@@ -17,6 +17,7 @@ import { runDemandExecution } from "../core/executionService";
 import { ExecutionController } from "../core/executor";
 import { rerouteForQuota } from "../core/rerouting";
 import { HistoryStore } from "../core/historyStore";
+import { redactSecrets } from "../core/commandSecurity";
 import { gate2Delivery } from "./gates";
 import { Demand, EngineSnapshot } from "../core/types";
 import { EnginesFile, CostTable } from "../core/config";
@@ -254,7 +255,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     conf: CoorqConfig,
     note?: string
   ) {
-    const validation = validatePlan(demand.tasks.filter((t) => t.status !== "concluida"), ef, snaps);
+    const pending = demand.tasks.filter((t) => t.status !== "concluida");
+
+    // Re-roteia antes da validacao de disponibilidade: o objetivo desta etapa e
+    // justamente reparar engines sem cota/offline produzidos pelo planejador.
+    const reroutes = rerouteForQuota(pending, ef, snaps);
+    const completedIds = new Set(demand.tasks.filter((t) => t.status === "concluida").map((t) => t.id));
+    const validation = validatePlan(pending, ef, snaps, ef.defaults.min_credit_threshold, completedIds);
     if (!validation.valid) {
       demand.status = "nova"; store.upsert(demand); this.deps.refreshDemands();
       this.post({ type: "error", text: `Plano invalido: ${validation.errors.slice(0, 4).join(" | ")}` });
@@ -262,9 +269,6 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     }
     validation.warnings.forEach((w) => this.deps.log(`[plan-warning] ${w}`));
 
-    // re-roteamento deterministico por cota (pre-Gate 1)
-    const pending = demand.tasks.filter((t) => t.status !== "concluida");
-    const reroutes = rerouteForQuota(pending, ef, snaps);
     if (reroutes.length) {
       const history = new HistoryStore(path.join(this.deps.cfg().root, this.deps.cfg().configDir, "state", "history.json"));
       for (const r of reroutes) {
@@ -396,7 +400,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         gate1Approved: true,
         controller: this.controller,
         onOutput: (taskId, chunk) => {
-          const cur = (tails.get(taskId) || "") + chunk;
+          const cur = (tails.get(taskId) || "") + redactSecrets(chunk);
           tails.set(taskId, cur.slice(-400));
         },
         onUpdate: ({ task }) => {

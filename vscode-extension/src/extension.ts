@@ -14,6 +14,7 @@ import { validatePlan } from "./core/planValidation";
 import { importPack, readManifest } from "./core/agentPacks";
 import { HistoryStore } from "./core/historyStore";
 import { quotaDashboardMarkdown } from "./core/quotaDashboard";
+import { rerouteForQuota } from "./core/rerouting";
 import { gate1PlanCost, gate2Delivery } from "./ui/gates";
 import { DemandNode, DemandsProvider, EnginesProvider, TaskNode } from "./ui/trees";
 import { taskDetailMarkdown } from "./core/taskDetails";
@@ -371,6 +372,7 @@ export function activate(context: vscode.ExtensionContext) {
       const plannerCfg = ef.engines[c.plannerEngine];
       const raw = await runPlanner(plannerCfg, prompt, c.root, ef.defaults.exec_timeout_seconds);
       demand.tasks = parsePlan(raw);
+      const reroutes = rerouteForQuota(demand.tasks, ef, snaps);
       const validation = validatePlan(demand.tasks, ef, snaps);
       if (!validation.valid) {
         out.appendLine(`Plano invalido para ${demand.id}:`);
@@ -379,6 +381,16 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       validation.warnings.forEach((w) => out.appendLine(`Aviso de plano: ${w}`));
+      if (reroutes.length) {
+        const history = new HistoryStore(path.join(c.root, c.configDir, "state", "history.json"));
+        for (const r of reroutes) {
+          history.appendRoutingOverride({
+            at: new Date().toISOString(), taskId: r.task.id, context: "reroute-quota",
+            suggestedEngine: r.from, chosenEngine: r.to, reason: r.reason,
+          });
+          out.appendLine(`Re-roteado por cota: ${r.task.id} ${r.from} -> ${r.to} (${r.reason})`);
+        }
+      }
 
       const quota = estimateDemandQuota(demand.tasks, cost);
       const est = estimateDemand(demand.tasks, cost);
