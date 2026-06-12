@@ -54,7 +54,8 @@ export function validatePlan(
   tasks: Task[],
   enginesFile: EnginesFile,
   snapshots: EngineSnapshot[],
-  minCreditThreshold = enginesFile.defaults.min_credit_threshold
+  minCreditThreshold = enginesFile.defaults.min_credit_threshold,
+  satisfiedDependencyIds: ReadonlySet<string> = new Set()
 ): PlanValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -109,7 +110,9 @@ export function validatePlan(
 
   for (const t of tasks) {
     for (const dep of t.dependsOn || []) {
-      if (!ids.has(dep)) errors.push(`Tarefa ${t.id} depende de tarefa inexistente: ${dep}.`);
+      if (!ids.has(dep) && !satisfiedDependencyIds.has(dep)) {
+        errors.push(`Tarefa ${t.id} depende de tarefa inexistente: ${dep}.`);
+      }
     }
   }
 

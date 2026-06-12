@@ -82,10 +82,39 @@ export async function probeEngine(
   return { id, state, creditRemaining, probedAt: now, detail };
 }
 
-export async function probeAll(enginesFile: EnginesFile): Promise<EngineSnapshot[]> {
+export interface ProbeOptions {
+  /** Reusa snapshots recentes (default 60s). 0 desativa o cache. */
+  cacheTtlMs?: number;
+  /** Ignora o cache e re-executa todos os probes (ex.: comando manual). */
+  force?: boolean;
+}
+
+const DEFAULT_PROBE_TTL_MS = 60_000;
+let probeCache: { key: string; at: number; snaps: EngineSnapshot[] } | null = null;
+
+function probeCacheKey(enginesFile: EnginesFile, ids: string[]): string {
+  return ids.map((id) => {
+    const e = enginesFile.engines[id];
+    return `${id}|${e.probe?.command || ""}|${e.credit_probe?.command || ""}`;
+  }).join("\n");
+}
+
+/** Limpa o cache de probes (testes / pos-edicao de engines.yaml). */
+export function invalidateProbeCache() { probeCache = null; }
+
+export async function probeAll(enginesFile: EnginesFile, opts: ProbeOptions = {}): Promise<EngineSnapshot[]> {
   const t = enginesFile.defaults.probe_timeout_seconds;
   const ids = Object.keys(enginesFile.engines).filter((id) => enginesFile.engines[id].enabled !== false);
-  return Promise.all(ids.map((id) => probeEngine(id, enginesFile.engines[id], t)));
+  const ttl = opts.cacheTtlMs ?? DEFAULT_PROBE_TTL_MS;
+  const key = probeCacheKey(enginesFile, ids);
+
+  if (!opts.force && ttl > 0 && probeCache && probeCache.key === key && Date.now() - probeCache.at < ttl) {
+    return probeCache.snaps;
+  }
+
+  const snaps = await Promise.all(ids.map((id) => probeEngine(id, enginesFile.engines[id], t)));
+  probeCache = { key, at: Date.now(), snaps };
+  return snaps;
 }
 
 export interface InstalledEngine {

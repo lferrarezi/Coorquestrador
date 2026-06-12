@@ -17,6 +17,8 @@ export interface EngineConfig {
   credit_probe: { command: string; parse: "json" | "text"; json_path?: string };
   // descoberta automatica de modelos (opcional): roda o comando e extrai a lista.
   models_probe?: { command: string; parse: "lines" | "json"; json_path?: string };
+  // extracao de consumo REAL do stdout da execucao (opcional; ha defaults por engine).
+  usage_parse?: { parse: "json" | "regex"; json_path?: string; pattern?: string };
   exec_template: string;
   models: string[];
   default_model: string;
@@ -29,7 +31,7 @@ export interface EngineConfig {
 export interface EngineSnapshot {
   id: string;
   state: EngineState;
-  creditRemaining: number | null; // fracao 0..1 quando conhecida, ou valor absoluto
+  creditRemaining: number | null; // percentual 0..100 quando conhecido
   probedAt: string;               // ISO timestamp
   detail: string;
 }
@@ -73,6 +75,43 @@ export interface Task {
   log?: string;
   logFile?: string;
   durationMs?: number;
+  // cota real foi medida do stdout (true) ou herdada da estimativa (false/ausente)?
+  realQuotaMeasured?: boolean;
+  // re-roteamento deterministico por cota (pre-Gate 1):
+  rerouted?: { from: string; reason: string };
+  // parecer do revisor automatizado (pre-Gate 2):
+  reviewVerdict?: { ok: boolean; reviewer: string; summary: string };
+  // execucao cancelada pelo usuario:
+  cancelled?: boolean;
+}
+
+/** Registro historico de execucao (state/history.json) para dashboard/recalibracao. */
+export interface ExecutionRecord {
+  demandId: string;
+  taskId: string;
+  engine: string;
+  model: string;
+  power: string;
+  size: string;
+  unit: "token" | "acu";
+  estimatedQuota: number;
+  realQuota: number | null;     // null = nao medido
+  measured: boolean;
+  exitCode: number;
+  durationMs: number;
+  finishedAt: string;           // ISO
+}
+
+/** Telemetria de roteamento: divergencias entre sugestao e escolha do usuario. */
+export interface RoutingOverrideRecord {
+  at: string;                   // ISO
+  taskId?: string;
+  context: "rerun" | "chat-selection" | "reroute-quota";
+  suggestedEngine?: string;
+  suggestedModel?: string;
+  chosenEngine?: string;
+  chosenModel?: string;
+  reason?: string;
 }
 
 export interface Demand {

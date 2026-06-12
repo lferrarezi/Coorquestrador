@@ -43,6 +43,9 @@ const commandBuilder_1 = require("./commandBuilder");
 const commandSecurity_1 = require("./commandSecurity");
 const executor_1 = require("./executor");
 const estimator_1 = require("./estimator");
+const historyStore_1 = require("./historyStore");
+const usageParser_1 = require("./usageParser");
+const reviewer_1 = require("./reviewer");
 function sddForTask(t) {
     return `# Tarefa ${t.id}\n${t.description}\n\n## Criterio de aceite\n${t.acceptance}`;
 }
@@ -96,12 +99,15 @@ async function runDemandExecution(opts) {
     const cwd = path.join(opts.root, demand.project);
     const specDir = path.join(opts.root, opts.configDir, "specs", demand.id);
     const logDir = path.join(opts.root, opts.configDir, "logs", demand.id);
+    const history = new historyStore_1.HistoryStore(path.join(opts.root, opts.configDir, "state", "history.json"));
     const results = await (0, executor_1.executePlan)({
         tasks: demand.tasks,
         cwd,
         maxParallel: Math.min(opts.maxParallel, opts.enginesFile.defaults.max_parallel),
         execTimeoutSec: opts.enginesFile.defaults.exec_timeout_seconds,
         gate1Approved: opts.gate1Approved,
+        controller: opts.controller,
+        onOutput: opts.onOutput,
         buildFn: (t) => (0, commandBuilder_1.buildCommand)(t, opts.enginesFile.engines[t.engine], sddForTask(t), cwd, specDir),
         onUpdate: (t) => {
             opts.store.upsert(demand);
@@ -110,14 +116,46 @@ async function runDemandExecution(opts) {
     });
     for (const result of results) {
         const task = demand.tasks.find((t) => t.id === result.taskId);
-        if (task)
-            persistTaskLog(logDir, task, result);
+        if (!task)
+            continue;
+        persistTaskLog(logDir, task, result);
+        // cota REAL medida do stdout (quando o CLI reporta usage); senao mantem estimativa.
+        const engineCfg = task.engine ? opts.enginesFile.engines[task.engine] : undefined;
+        const measured = (0, usageParser_1.measureUsage)(engineCfg, `${result.stdout}\n${result.stderr}`);
+        if (measured) {
+            task.realQuota = measured.amount;
+            task.quotaUnit = measured.unit;
+            task.realQuotaMeasured = true;
+        }
+        history.appendExecution({
+            demandId: demand.id,
+            taskId: task.id,
+            engine: task.engine || "",
+            model: task.model || "",
+            power: task.power || "",
+            size: task.size,
+            unit: task.quotaUnit || engineCfg?.unit || "token",
+            estimatedQuota: task.estimatedQuota || 0,
+            realQuota: measured ? measured.amount : null,
+            measured: !!measured,
+            exitCode: result.code,
+            durationMs: result.durationMs,
+            finishedAt: new Date().toISOString(),
+        });
     }
     for (const task of demand.tasks.filter((t) => t.status === "revisao")) {
         const reasons = gate2ReasonsForTask(task, opts.costTable);
+        // revisor automatizado (assistente barato) compara resultado vs aceite.
+        let verdict;
+        if (opts.autoReview !== false && !opts.controller?.cancelled) {
+            verdict = await (0, reviewer_1.reviewTask)(task, opts.enginesFile, cwd);
+            task.reviewVerdict = verdict;
+            if (!verdict.ok)
+                reasons.push(`revisor automatizado reprovou: ${verdict.summary}`);
+        }
         let approved = true;
         if (reasons.length && opts.reviewGate2) {
-            approved = await opts.reviewGate2({ task, reasons });
+            approved = await opts.reviewGate2({ task, reasons, verdict });
         }
         task.status = approved ? "concluida" : "rejeitada";
         task.realQuota = task.realQuota ?? task.estimatedQuota;

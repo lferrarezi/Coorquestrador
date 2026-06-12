@@ -6,12 +6,18 @@ const os = require("os");
 const path = require("path");
 const { validatePlan } = require("../dist/core/planValidation");
 const { estimateDemandQuota } = require("../dist/core/estimator");
-const { executePlan } = require("../dist/core/executor");
+const { executePlan, ExecutionController, windowsTaskkillArgs } = require("../dist/core/executor");
+const { measureUsage } = require("../dist/core/usageParser");
+const { rerouteForQuota } = require("../dist/core/rerouting");
+const { HistoryStore, consumptionByEngine, calibrationBySize } = require("../dist/core/historyStore");
+const { quotaDashboardMarkdown } = require("../dist/core/quotaDashboard");
+const { parseReviewOutput, reviewTask } = require("../dist/core/reviewer");
+const { splitForReplan, buildReplanPrompt, mergeReplanned } = require("../dist/core/planner");
 const { DemandStore } = require("../dist/core/demandStore");
 const { CoorqConfig } = require("../dist/core/config");
 const { buildCommand } = require("../dist/core/commandBuilder");
 const { ensureInsideDir, redactCommand, redactSecrets, validateExecTemplate } = require("../dist/core/commandSecurity");
-const { discoverInstalledClis, discoverModels, resolveBinPath } = require("../dist/core/prober");
+const { discoverInstalledClis, discoverModels, resolveBinPath, probeAll, invalidateProbeCache } = require("../dist/core/prober");
 const { gate2ReasonsForTask } = require("../dist/core/executionService");
 const { taskDetailMarkdown } = require("../dist/core/taskDetails");
 
@@ -87,6 +93,18 @@ async function test(name, fn) {
     assert.ok(result.errors.some((e) => e.includes("ciclo")));
   });
 
+  await test("validatePlan accepts dependencies already satisfied by completed tasks", () => {
+    const tasks = [task("T2", ["T1"] )];
+    const result = validatePlan(
+      tasks,
+      baseEngines(),
+      [{ id: "codex", state: "disponivel", creditRemaining: 90, probedAt: "now", detail: "" }],
+      5,
+      new Set(["T1"])
+    );
+    assert.equal(result.valid, true);
+  });
+
   await test("estimateDemandQuota aggregates by engine and unit", () => {
     const cost = {
       currency: "USD",
@@ -123,6 +141,61 @@ async function test(name, fn) {
     });
     assert.deepEqual(order, ["T1", "T2"]);
     assert.equal(tasks[1].status, "revisao");
+  });
+
+  await test("executePlan blocks dependents of rejected tasks", async () => {
+    const tasks = [task("T1"), task("T2", ["T1"]), task("T3")];
+    tasks.forEach((t) => { t.status = "aprovada"; });
+    const updates = [];
+    await executePlan({
+      tasks,
+      cwd: process.cwd(),
+      maxParallel: 2,
+      execTimeoutSec: 1,
+      gate1Approved: true,
+      buildFn: () => ({ command: "noop", redactedCommand: "noop", inputMode: "arg" }),
+      runFn: async (taskId) => ({ taskId, code: taskId === "T1" ? 1 : 0, stdout: "", stderr: "", durationMs: 1 }),
+      onUpdate: (t) => updates.push(`${t.id}:${t.status}`),
+    });
+    assert.equal(tasks[0].status, "rejeitada");
+    assert.equal(tasks[1].status, "bloqueada");
+    assert.ok(tasks[1].log.includes("dependencia nao concluida"));
+    assert.equal(tasks[2].status, "revisao");
+    assert.ok(updates.includes("T2:bloqueada"));
+  });
+
+  await test("executePlan marks timeout with code 124 and kills the process tree", async () => {
+    if (process.platform === "win32") return; // usa sleep/sh do POSIX
+    const tasks = [task("T1")];
+    tasks[0].status = "aprovada";
+    const results = await executePlan({
+      tasks,
+      cwd: process.cwd(),
+      maxParallel: 1,
+      execTimeoutSec: 1,
+      gate1Approved: true,
+      buildFn: () => ({ command: "sh -c 'sleep 30'", redactedCommand: "sleep", inputMode: "arg" }),
+      onUpdate: () => {},
+    });
+    assert.equal(results[0].code, 124);
+    assert.equal(results[0].timedOut, true);
+    assert.ok(results[0].stderr.includes("timeout"));
+    assert.equal(tasks[0].status, "rejeitada");
+    assert.ok(results[0].durationMs < 5000, "deve encerrar logo apos o timeout, nao apos o sleep");
+  });
+
+  await test("probeAll caches snapshots within TTL and force bypasses", async () => {
+    invalidateProbeCache();
+    const ef = baseEngines();
+    ef.engines.codex.probe = { command: "true", expect_exit_code: 0 };
+    const a = await probeAll(ef);
+    const b = await probeAll(ef);            // cache hit: mesmo array
+    assert.equal(a, b);
+    const c = await probeAll(ef, { force: true });
+    assert.notEqual(b, c);                   // force re-executa
+    const d = await probeAll(ef, { cacheTtlMs: 0 });
+    assert.notEqual(c, d);                   // ttl 0 desativa cache
+    invalidateProbeCache();
   });
 
   await test("DemandStore writes atomically and loads saved demand", () => {
@@ -281,5 +354,192 @@ async function test(name, fn) {
     const commands = pkg.contributes.commands.map((c) => c.command);
     assert.ok(commands.includes("coorq.showTaskDetails"));
     assert.ok(commands.includes("coorq.rerunTask"));
+    assert.ok(commands.includes("coorq.quotaDashboard"));
+  });
+
+  await test("measureUsage extracts claude json usage and codex tokens-used", () => {
+    const cfg = baseEngines().engines.codex;
+    const claudeOut = JSON.stringify({ result: "ok", usage: { input_tokens: 1200, output_tokens: 300 } });
+    assert.deepEqual(measureUsage({ ...cfg, unit: "token" }, claudeOut), { unit: "token", amount: 1500 });
+    assert.deepEqual(measureUsage(cfg, "trabalho feito\ntokens used: 12,345\n"), { unit: "token", amount: 12345 });
+    assert.equal(measureUsage(cfg, "saida sem usage"), null);
+  });
+
+  await test("measureUsage honors declared usage_parse regex", () => {
+    const cfg = { ...baseEngines().engines.codex, usage_parse: { parse: "regex", pattern: "consumo=(\\d+)" } };
+    assert.deepEqual(measureUsage(cfg, "blah consumo=777 blah"), { unit: "token", amount: 777 });
+  });
+
+  await test("measureUsage accepts numeric strings from declared json paths", () => {
+    const cfg = { ...baseEngines().engines.codex, usage_parse: { parse: "json", json_path: "$.usage.total" } };
+    assert.deepEqual(measureUsage(cfg, JSON.stringify({ usage: { total: "1,234" } })), { unit: "token", amount: 1234 });
+  });
+
+  await test("rerouteForQuota moves task off exhausted engine and blocks when none eligible", () => {
+    const ef = baseEngines();
+    ef.engines.backup = { ...ef.engines.codex, bin: "backup", best_for: ["coding"], models: ["m1"], default_model: "m1" };
+    const t = task("T1");
+    t.status = "planejada";
+    const snaps = [
+      { id: "codex", state: "sem-credito", creditRemaining: 0, probedAt: "now", detail: "" },
+      { id: "backup", state: "disponivel", creditRemaining: 80, probedAt: "now", detail: "" },
+    ];
+    const changes = rerouteForQuota([t], ef, snaps, 5);
+    assert.equal(changes.length, 1);
+    assert.equal(t.engine, "backup");
+    assert.equal(t.model, "m1");
+    assert.equal(t.rerouted.from, "codex");
+
+    const t2 = task("T2");
+    const noneEligible = [{ id: "codex", state: "sem-credito", creditRemaining: 0, probedAt: "now", detail: "" }];
+    const changes2 = rerouteForQuota([t2], baseEngines(), noneEligible, 5);
+    assert.equal(changes2.length, 0);
+    assert.equal(t2.status, "bloqueada");
+    assert.equal(t2.engine, undefined);
+    assert.equal(t2.model, undefined);
+    assert.equal(t2.power, undefined);
+  });
+
+  await test("rerouteForQuota selects effort supported by the replacement model", () => {
+    const ef = baseEngines();
+    ef.engines.backup = {
+      ...ef.engines.codex,
+      models: ["fast"],
+      default_model: "fast",
+      powers: ["low", "normal", "high"],
+      model_powers: { fast: ["low"] },
+    };
+    const t = { ...task("T-power"), power: "high" };
+    rerouteForQuota([t], ef, [
+      { id: "codex", state: "sem-credito", creditRemaining: 0, probedAt: "now", detail: "" },
+      { id: "backup", state: "disponivel", creditRemaining: 90, probedAt: "now", detail: "" },
+    ], 5);
+    assert.equal(t.engine, "backup");
+    assert.equal(t.model, "fast");
+    assert.equal(t.power, "low");
+  });
+
+  await test("history store aggregates consumption and calibration", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coorq-hist-"));
+    const store = new HistoryStore(path.join(dir, "state", "history.json"));
+    const base = { demandId: "D1", model: "m", power: "normal", durationMs: 10, finishedAt: "2026-06-02T00:00:00Z" };
+    store.appendExecution({ ...base, taskId: "T1", engine: "codex", size: "small", unit: "token", estimatedQuota: 100, realQuota: 150, measured: true, exitCode: 0 });
+    store.appendExecution({ ...base, taskId: "T2", engine: "codex", size: "small", unit: "token", estimatedQuota: 100, realQuota: null, measured: false, exitCode: 0 });
+    store.appendRoutingOverride({ at: "now", context: "rerun", suggestedEngine: "codex", chosenEngine: "claude-code" });
+    const shape = store.load();
+    assert.equal(shape.executions.length, 2);
+    assert.equal(shape.routingOverrides.length, 1);
+    const cons = consumptionByEngine(shape.executions);
+    assert.equal(cons[0].engine, "codex");
+    assert.equal(cons[0].totalEstimated, 200);
+    assert.equal(cons[0].totalReal, 250);       // 150 medido + 100 estimado
+    assert.equal(cons[0].totalMeasured, 150);
+    const calib = calibrationBySize(shape.executions);
+    assert.equal(calib.length, 1);
+    assert.equal(calib[0].samples, 1);
+    assert.equal(calib[0].ratio, 1.5);
+  });
+
+  await test("quota dashboard markdown includes probe, consumption and calibration", () => {
+    const snaps = [{ id: "codex", state: "disponivel", creditRemaining: 82, probedAt: "now", detail: "" }];
+    const execs = [{ demandId: "D1", taskId: "T1", engine: "codex", model: "m", power: "normal", size: "small", unit: "token", estimatedQuota: 100, realQuota: 150, measured: true, exitCode: 0, durationMs: 5, finishedAt: "2026-06-02T00:00:00Z" }];
+    const md = quotaDashboardMarkdown(snaps, execs, new Date("2026-06-02T12:00:00Z"));
+    assert.ok(md.includes("| codex | disponivel | 82% |"));
+    assert.ok(md.includes("Consumo acumulado por assistente"));
+    assert.ok(md.includes("Calibracao: estimado vs medido"));
+    assert.ok(md.includes("1.50x"));
+  });
+
+  await test("reviewer parses verdict and survives runner failure", async () => {
+    const ok = parseReviewOutput("VEREDITO: APROVADO\nRESUMO: tudo certo conforme o aceite.", "codex/m");
+    assert.equal(ok.ok, true);
+    assert.ok(ok.summary.includes("tudo certo"));
+    const bad = parseReviewOutput("VEREDITO: REPROVADO\nRESUMO: faltou o arquivo X.", "codex/m");
+    assert.equal(bad.ok, false);
+
+    const t = { ...task("T1"), log: "saida" };
+    const verdict = await reviewTask(t, baseEngines(), process.cwd(), 5, undefined, async () => {
+      throw new Error("cli quebrou");
+    });
+    assert.equal(verdict.ok, false);
+    assert.ok(verdict.summary.includes("revisao falhou"));
+  });
+
+  await test("partial replan splits, prompts with error logs and merges preserving completed", () => {
+    const done = { ...task("T1"), status: "concluida" };
+    const failed = { ...task("T2", ["T1"]), status: "rejeitada", log: "Error: explodiu na linha 42" };
+    const demand = { id: "D1", project: ".", title: "Demo", description: "desc", createdAt: "now", status: "bloqueada", tasks: [done, failed] };
+    const input = splitForReplan(demand);
+    assert.equal(input.completed.length, 1);
+    assert.equal(input.failed.length, 1);
+
+    const prompt = buildReplanPrompt({
+      agentSpec: "spec", input, projectContext: "",
+      snapshot: [], enginesMeta: {},
+    });
+    assert.ok(prompt.includes("REPLANEJAMENTO PARCIAL"));
+    assert.ok(prompt.includes("explodiu na linha 42"));
+    assert.ok(prompt.includes("- T1: description T1"));
+
+    const merged = mergeReplanned(demand, [{ ...task("T1"), status: "planejada" }, { ...task("T3"), status: "planejada" }]);
+    const ids = merged.tasks.map((t) => t.id).sort();
+    assert.deepEqual(ids, ["T1", "T1-r", "T3"]);           // colisao com concluida ganha sufixo
+    assert.equal(merged.tasks.find((t) => t.id === "T1").status, "concluida");
+    assert.equal(merged.status, "aguardando-gate1");
+  });
+
+  await test("partial replan remaps dependencies when a new id collides with completed work", () => {
+    const done = { ...task("T1"), status: "concluida" };
+    const failed = { ...task("T2", ["T1"]), status: "rejeitada" };
+    const demand = { id: "D2", project: ".", title: "Demo", description: "desc", createdAt: "now", status: "bloqueada", tasks: [done, failed] };
+    const merged = mergeReplanned(demand, [
+      { ...task("T1"), status: "planejada" },
+      { ...task("T3", ["T1"]), status: "planejada" },
+    ]);
+    assert.equal(merged.tasks.find((t) => t.id === "T3").dependsOn[0], "T1-r");
+  });
+
+  await test("windows cancellation targets the full process tree", () => {
+    assert.deepEqual(windowsTaskkillArgs(4321), ["/pid", "4321", "/T", "/F"]);
+  });
+
+  await test("executePlan rejects a task when command construction fails", async () => {
+    const tasks = [task("T-build")];
+    tasks[0].status = "aprovada";
+    const results = await executePlan({
+      tasks,
+      cwd: process.cwd(),
+      maxParallel: 1,
+      execTimeoutSec: 1,
+      gate1Approved: true,
+      buildFn: () => { throw new Error("config invalida"); },
+      onUpdate: () => {},
+    });
+    assert.equal(results.length, 0);
+    assert.equal(tasks[0].status, "rejeitada");
+    assert.ok(tasks[0].log.includes("config invalida"));
+  });
+
+  await test("execution controller cancels pending tasks", async () => {
+    const tasks = [task("T1"), task("T2")];
+    tasks.forEach((t) => { t.status = "aprovada"; });
+    const controller = new ExecutionController();
+    const results = await executePlan({
+      tasks,
+      cwd: process.cwd(),
+      maxParallel: 1,
+      execTimeoutSec: 5,
+      gate1Approved: true,
+      controller,
+      buildFn: () => ({ command: "noop", redactedCommand: "noop", inputMode: "arg" }),
+      runFn: async (taskId) => {
+        controller.cancel(); // cancela durante a primeira tarefa
+        return { taskId, code: 0, stdout: "", stderr: "", durationMs: 1 };
+      },
+      onUpdate: () => {},
+    });
+    assert.equal(results.length, 1);                        // so a primeira rodou
+    assert.equal(tasks[1].status, "bloqueada");             // a segunda nao dispara
+    assert.ok(tasks[1].log.includes("cancelada"));
   });
 })();
