@@ -5,7 +5,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { validatePlan } = require("../dist/core/planValidation");
-const { estimateDemandQuota } = require("../dist/core/estimator");
+const { estimateDemandQuota, crossesGate2 } = require("../dist/core/estimator");
 const { executePlan, ExecutionController, windowsTaskkillArgs } = require("../dist/core/executor");
 const { measureUsage } = require("../dist/core/usageParser");
 const { rerouteForQuota } = require("../dist/core/rerouting");
@@ -120,6 +120,12 @@ async function test(name, fn) {
     assert.equal(estimate.perTask.T2.amount, 1500);
     assert.equal(estimate.byEngine.codex.amount, 1600);
     assert.equal(estimate.totalByUnit.token, 1600);
+  });
+
+  await test("crossesGate2 treats zero threshold as disabled", () => {
+    assert.equal(crossesGate2(0, { cost_gate2_threshold: 0 }), false);
+    assert.equal(crossesGate2(1, { cost_gate2_threshold: 0 }), false);
+    assert.equal(crossesGate2(100, { cost_gate2_threshold: 100 }), true);
   });
 
   await test("executePlan respects DAG ordering with injected runner", async () => {

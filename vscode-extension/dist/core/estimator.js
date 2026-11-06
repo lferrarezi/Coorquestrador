@@ -64,7 +64,9 @@ function estimateDemand(tasks, cost) {
     return { perTask, total };
 }
 function crossesGate2(total, cost) {
-    return total >= cost.cost_gate2_threshold;
+    // Zero desativa o gate monetario legado; caso contrario toda tarefa
+    // acionaria revisao porque qualquer custo nao-negativo satisfaz >= 0.
+    return cost.cost_gate2_threshold > 0 && total >= cost.cost_gate2_threshold;
 }
 function crossesQuotaGate2(task, cost) {
     const threshold = cost.quota_gate2_threshold;

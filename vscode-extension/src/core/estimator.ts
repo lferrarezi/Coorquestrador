@@ -75,7 +75,9 @@ export function estimateDemand(tasks: Task[], cost: CostTable): { perTask: Recor
 }
 
 export function crossesGate2(total: number, cost: CostTable): boolean {
-  return total >= cost.cost_gate2_threshold;
+  // Zero desativa o gate monetario legado; caso contrario toda tarefa
+  // acionaria revisao porque qualquer custo nao-negativo satisfaz >= 0.
+  return cost.cost_gate2_threshold > 0 && total >= cost.cost_gate2_threshold;
 }
 
 export function crossesQuotaGate2(task: Task, cost: CostTable): boolean {
