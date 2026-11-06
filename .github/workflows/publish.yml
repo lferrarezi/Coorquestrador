@@ -40,6 +40,16 @@ jobs:
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "prerelease_flag=$PRERELEASE_FLAG" >> "$GITHUB_OUTPUT"
 
+      - name: Validate tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="${{ steps.package.outputs.version }}"
+          if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "Release tag $GITHUB_REF_NAME does not match package version $PACKAGE_VERSION"
+            exit 1
+          fi
+
       - name: Package VSIX
         run: npx vsce package ${{ steps.package.outputs.prerelease_flag }} --out "coorquestrador-${{ steps.package.outputs.version }}.vsix"
 
