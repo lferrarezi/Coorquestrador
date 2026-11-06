@@ -8,7 +8,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { CoorqConfig } from "../core/config";
 import { DemandStore } from "../core/demandStore";
-import { runChat, buildChatPrompt, ChatTurn } from "../core/chat";
+import { runChat, buildChatPrompt, CHAT_READ_ONLY_SYSTEM, ChatTurn } from "../core/chat";
 import { applyCliDiscoveryToEnginesFile, discoverInstalledClis, detectInstalled, probeAll } from "../core/prober";
 import { buildPlannerPrompt, parsePlan, runPlanner, splitForReplan, buildReplanPrompt, mergeReplanned } from "../core/planner";
 import { estimateDemand, estimateDemandQuota } from "../core/estimator";
@@ -164,7 +164,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const system = fs.existsSync(agentPath)
       ? fs.readFileSync(agentPath, "utf8")
       : "Voce e o Coorquestrador: ajude a refinar a tarefa antes de planejar e executar.";
-    const prompt = buildChatPrompt(system, this.history);
+    const prompt = buildChatPrompt(`${CHAT_READ_ONLY_SYSTEM}\n\n${system}`, this.history);
     const timeout = ef.defaults?.exec_timeout_seconds || 600;
 
     try {

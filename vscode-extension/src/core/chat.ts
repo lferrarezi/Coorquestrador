@@ -13,6 +13,16 @@ function shellQuote(s: string): string {
 
 export interface ChatTurn { role: "user" | "assistant"; content: string; }
 
+/** O chat e uma etapa de descoberta; alteracoes pertencem ao plano aprovado. */
+export const CHAT_READ_ONLY_SYSTEM = `
+MODO CONVERSA SOMENTE LEITURA:
+- Nao crie, edite, remova ou sobrescreva arquivos.
+- Nao execute comandos com efeitos colaterais, nao instale dependencias e nao altere configuracoes.
+- Pode inspecionar o workspace para responder e refinar a demanda.
+- Se o usuario pedir uma mudanca, descreva o que seria feito e aguarde a conversao em tarefa e a aprovacao do Gate 1.
+- Nunca afirme que uma mudanca foi executada durante esta conversa.
+`;
+
 /** Monta o prompt do turno atual incluindo o historico (CLI e stateless). */
 export function buildChatPrompt(system: string, history: ChatTurn[]): string {
   const convo = history
@@ -31,8 +41,16 @@ export function runChat(
   onChunk: (chunk: string) => void
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    assertValidExecTemplate(engineCfg, "chat");
-    let command = engineCfg.exec_template
+    // Nao reutiliza exec_template: um engine customizado sem uma variante
+    // somente leitura deve falhar fechado, antes de qualquer spawn.
+    const template = engineCfg.chat_exec_template;
+    if (!template) {
+      reject(new Error("Engine sem chat_exec_template somente leitura; conversa bloqueada por seguranca."));
+      return;
+    }
+    const chatCfg = { ...engineCfg, exec_template: template };
+    assertValidExecTemplate(chatCfg, "chat");
+    let command = template
       .replace("{model}", sanitizeTemplateValue(engineCfg.default_model, "model"))
       .replace("{power}", sanitizeTemplateValue(power, "power"))
       .replace("{cwd}", shellQuote(cwd))

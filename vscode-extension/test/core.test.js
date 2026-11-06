@@ -12,7 +12,7 @@ const { rerouteForQuota } = require("../dist/core/rerouting");
 const { HistoryStore, consumptionByEngine, calibrationBySize } = require("../dist/core/historyStore");
 const { quotaDashboardMarkdown } = require("../dist/core/quotaDashboard");
 const { parseReviewOutput, reviewTask } = require("../dist/core/reviewer");
-const { splitForReplan, buildReplanPrompt, mergeReplanned } = require("../dist/core/planner");
+const { splitForReplan, buildPlannerPrompt, parsePlan, buildReplanPrompt, mergeReplanned } = require("../dist/core/planner");
 const { DemandStore } = require("../dist/core/demandStore");
 const { CoorqConfig } = require("../dist/core/config");
 const { buildCommand } = require("../dist/core/commandBuilder");
@@ -314,6 +314,68 @@ async function test(name, fn) {
       models_probe: { command: "printf 'gemini-3.5-flash\\n'", parse: "lines" },
     }, 1);
     assert.deepEqual(models, []);
+  });
+
+  await test("discoverModels ignores stale Codex and Copilot local-state candidates", async () => {
+    const codex = await discoverModels({
+      ...baseEngines().engines.codex,
+      bin: "codex",
+      models_probe: { command: "printf 'gpt-5.5\\n'", parse: "lines" },
+    }, 1);
+    const copilot = await discoverModels({
+      ...baseEngines().engines.codex,
+      bin: "copilot",
+      models_probe: { command: "printf 'claude-haiku-4.5\\n'", parse: "lines" },
+    }, 1);
+    assert.deepEqual(codex, []);
+    assert.deepEqual(copilot, []);
+  });
+
+  await test("loadEngines migrates stale Codex and Copilot model defaults in memory", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coorq-config-migration-"));
+    const conf = new CoorqConfig(dir, ".coorq");
+    conf.ensureProjectDefaults();
+    const enginesPath = conf.enginesPath();
+    let raw = fs.readFileSync(enginesPath, "utf8");
+    raw = raw.replace("codex exec --skip-git-repo-check {prompt}", "codex exec -m {model} --skip-git-repo-check {prompt}");
+    raw = raw.replace("models: [default]", "models: [gpt-5.5, gpt-5.4]");
+    raw = raw.replace("default_model: default", "default_model: gpt-5.5");
+    raw = raw.replace(
+      'exec_template: "copilot -p {prompt} --model auto --allow-all-tools --no-color"',
+      'exec_template: "copilot -p {prompt} --model {model} --allow-all-tools --no-color"\n    models_probe:\n      command: "strings ~/.copilot/session-store.db"\n      parse: lines',
+    );
+    raw = raw.replace("models: [auto]", "models: [claude-haiku-4.5, gpt-5.2]");
+    raw = raw.replace("default_model: auto", "default_model: claude-haiku-4.5");
+    fs.writeFileSync(enginesPath, raw, "utf8");
+    const migrated = conf.loadEngines();
+    assert.equal(migrated.engines.codex.exec_template, "codex exec --skip-git-repo-check {prompt}");
+    assert.deepEqual(migrated.engines.codex.models, ["default"]);
+    assert.equal(migrated.engines.codex.default_model, "default");
+    assert.equal(migrated.engines["github-copilot-cli"].exec_template, "copilot -p {prompt} --model auto --allow-all-tools --no-color");
+    assert.deepEqual(migrated.engines["github-copilot-cli"].models, ["auto"]);
+    assert.equal(migrated.engines["github-copilot-cli"].default_model, "auto");
+  });
+
+  await test("loadEngines provides read-only chat templates", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coorq-chat-template-"));
+    const conf = new CoorqConfig(dir, ".coorq");
+    conf.ensureProjectDefaults();
+    const enginesPath = conf.enginesPath();
+    const raw = fs.readFileSync(enginesPath, "utf8").replace(/\n    chat_exec_template:.*\n/g, "\n");
+    fs.writeFileSync(enginesPath, raw, "utf8");
+    const loaded = conf.loadEngines();
+    assert.ok(loaded.engines.codex.chat_exec_template.includes("--sandbox read-only"));
+    assert.ok(!loaded.engines["github-copilot-cli"].chat_exec_template.includes("--allow-all-tools"));
+  });
+
+  await test("planner contract forbids external gate dependencies and normalizes acceptance", () => {
+    const prompt = buildPlannerPrompt({
+      agentSpec: "spec", demand: { id: "D1", project: ".", title: "Demo", description: "desc", createdAt: "now", status: "nova", tasks: [] },
+      projectContext: "", snapshot: [], enginesMeta: {},
+    });
+    assert.ok(prompt.includes("nunca use nomes de gates"));
+    const tasks = parsePlan("```json\n" + JSON.stringify([{ id: "T1", activity: "a", description: "d", size: "S", criticality: "normal", dependsOn: [], acceptance: ["arquivo existe", "conteudo exato"], engine: "codex", model: "gpt-5.4", power: "normal" }]) + "\n```");
+    assert.equal(tasks[0].acceptance, "arquivo existe\nconteudo exato");
   });
 
   await test("chat webview forwards toolbar commands", () => {

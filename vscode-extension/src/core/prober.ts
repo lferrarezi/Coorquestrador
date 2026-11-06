@@ -161,11 +161,7 @@ const KNOWN_CLIS: KnownCliDefinition[] = [
   {
     id: "codex",
     bin: "codex",
-    models_probe: {
-      command: "grep -hoE 'gpt-[0-9][a-zA-Z0-9.-]*' ~/.codex/.codex-global-state.json ~/.codex/sessions/*/*/*/*.jsonl 2>/dev/null | sort -u",
-      parse: "lines",
-    },
-    fallbackModels: ["gpt-5.5", "gpt-5.4"],
+    fallbackModels: ["default"],
     fallbackPowers: ["low", "normal", "medium", "high"],
   },
   {
@@ -191,11 +187,7 @@ const KNOWN_CLIS: KnownCliDefinition[] = [
   {
     id: "github-copilot-cli",
     bin: "copilot",
-    models_probe: {
-      command: "strings ~/.copilot/session-store.db 2>/dev/null | grep -oE '(claude|gpt|gemini)-[a-zA-Z0-9.-]+' | sort -u",
-      parse: "lines",
-    },
-    fallbackModels: ["claude-haiku-4.5", "gpt-5.2", "claude-sonnet-4.5"],
+    fallbackModels: ["auto"],
     fallbackPowers: ["normal"],
   },
 ];
@@ -267,7 +259,10 @@ async function whichBin(bin: string, timeoutSec: number): Promise<string> {
 
 /** Descobre modelos disponiveis de um engine rodando seu models_probe (best-effort). */
 export async function discoverModels(cfg: EngineConfig, timeoutSec: number): Promise<string[]> {
-  if (cfg.bin.toLowerCase().includes("gemini")) return [];
+  // Estado local nao e catalogo de capacidades: pode sobreviver a troca de conta,
+  // plano ou versao do CLI. Gemini, Copilot e Codex devem expor seus fallbacks
+  // declarados; o comando real valida a disponibilidade no momento da execucao.
+  if (["gemini", "copilot", "codex"].some((name) => cfg.bin.toLowerCase().includes(name))) return [];
   const mp = cfg.models_probe;
   if (!mp || !mp.command || !mp.command.trim()) return discoverModelsFromLocalState(cfg.bin);
   const r = await run(mp.command, timeoutSec);

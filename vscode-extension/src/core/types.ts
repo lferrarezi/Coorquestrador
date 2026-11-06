@@ -20,6 +20,8 @@ export interface EngineConfig {
   // extracao de consumo REAL do stdout da execucao (opcional; ha defaults por engine).
   usage_parse?: { parse: "json" | "regex"; json_path?: string; pattern?: string };
   exec_template: string;
+  // Template separado para conversa livre, preferencialmente somente leitura.
+  chat_exec_template?: string;
   models: string[];
   default_model: string;
   powers: string[];

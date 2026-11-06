@@ -66,6 +66,7 @@ engines:
       parse: json
       json_path: "$.credits_remaining"
     exec_template: "claude -p --model {model} --permission-mode acceptEdits"
+    chat_exec_template: "claude -p --model {model} --permission-mode plan"
     models: [opus, sonnet, haiku]
     default_model: sonnet
     powers: [low, normal, medium, high]
@@ -88,12 +89,12 @@ engines:
     credit_probe:
       command: "f=$(ls -t ~/.codex/sessions/*/*/*/*.jsonl 2>/dev/null | head -1); grep -oE '\\"primary\\":\\\\{\\"used_percent\\":[0-9.]+' \\"$f\\" | tail -1 | grep -oE '[0-9.]+$' | awk '{printf \\"%.0f\\", 100-$1}'"
       parse: text
-    exec_template: "codex exec -m {model} --skip-git-repo-check {prompt}"
-    models_probe:
-      command: "grep -hoE 'gpt-[0-9][a-zA-Z0-9.-]*' ~/.codex/.codex-global-state.json ~/.codex/sessions/*/*/*/*.jsonl 2>/dev/null | sort -u"
-      parse: lines
-    models: [gpt-5.5, gpt-5.4]
-    default_model: gpt-5.5
+    # O catalogo persistido do Codex pode conter modelos indisponiveis para a conta atual.
+    # Sem -m, o proprio CLI escolhe um modelo valido para a autenticacao corrente.
+    exec_template: "codex exec --skip-git-repo-check {prompt}"
+    chat_exec_template: "codex exec --sandbox read-only --skip-git-repo-check {prompt}"
+    models: [default]
+    default_model: default
     powers: [low, normal, medium, high]
     unit: token
     best_for: [agentic-coding, autonomous-tasks, test-generation]
@@ -112,6 +113,7 @@ engines:
       parse: json
       json_path: "$.acu_remaining"
     exec_template: "devin --model {model} --permission-mode auto -p {prompt}"
+    chat_exec_template: "devin --model {model} --permission-mode auto -p {prompt}"
     models_probe:
       command: "devin --model x --permission-mode auto -p ping 2>&1 | grep -oE '(claude|gemini|gpt|deepseek|glm|kimi|swe)-[a-z0-9.-]+' | sort -u"
       parse: lines
@@ -135,6 +137,7 @@ engines:
       parse: json
       json_path: "$.quota.remaining"
     exec_template: "TERM=xterm-256color NO_COLOR=1 gemini -m {model} --approval-mode plan --skip-trust --output-format text -p {prompt}"
+    chat_exec_template: "TERM=xterm-256color NO_COLOR=1 gemini -m {model} --approval-mode plan --skip-trust --output-format text -p {prompt}"
     models_probe:
       command: ""
       parse: lines
@@ -156,12 +159,12 @@ engines:
     credit_probe:
       command: "gh api /copilot_internal/user -q .quota_snapshots.chat.percent_remaining 2>/dev/null"
       parse: text
-    exec_template: "copilot -p {prompt} --model {model} --allow-all-tools --no-color"
-    models_probe:
-      command: "strings ~/.copilot/session-store.db 2>/dev/null | grep -oE '(claude|gpt|gemini)-[a-zA-Z0-9.-]+' | sort -u"
-      parse: lines
-    models: [claude-haiku-4.5, gpt-5.2, claude-sonnet-4.5]
-    default_model: claude-haiku-4.5
+    # O catalogo gravado em ~/.copilot/session-store.db nao representa necessariamente
+    # o plano atual. O alias auto e validado pelo proprio Copilot CLI.
+    exec_template: "copilot -p {prompt} --model auto --allow-all-tools --no-color"
+    chat_exec_template: "copilot -p {prompt} --model auto --no-color"
+    models: [auto]
+    default_model: auto
     powers: [normal]
     unit: token
     best_for: [inline-edits, small-fixes, command-suggestions]
@@ -323,6 +326,23 @@ class CoorqConfig {
     }
     loadEngines() {
         const enginesFile = readYaml(this.enginesPath());
+        const codex = enginesFile.engines?.codex;
+        if (codex && /codex\s+exec\s+-m\s+\{model\}/.test(codex.exec_template || "")) {
+            // Migra em memoria configs geradas antes do fallback ao modelo padrao do CLI.
+            // Nao sobrescreve o .coorq/engines.yaml do usuario.
+            codex.exec_template = "codex exec --skip-git-repo-check {prompt}";
+            codex.models_probe = undefined;
+            codex.models = ["default"];
+            codex.default_model = "default";
+        }
+        const copilot = enginesFile.engines?.["github-copilot-cli"];
+        if (copilot && /session-store\.db/.test(copilot.models_probe?.command || "")) {
+            // A sessao persistida pode listar modelos que deixaram de existir no plano.
+            copilot.exec_template = "copilot -p {prompt} --model auto --allow-all-tools --no-color";
+            copilot.models_probe = undefined;
+            copilot.models = ["auto"];
+            copilot.default_model = "auto";
+        }
         const gemini = enginesFile.engines?.["gemini-cli"];
         if (gemini) {
             if (/gemini\s+-m\s+\{model\}\s+--approval-mode\s+yolo\s+-p\s+\{prompt\}/.test(gemini.exec_template || "")) {
@@ -336,6 +356,20 @@ class CoorqConfig {
                 gemini.models = ["gemini-2.5-pro", "gemini-2.5-flash"];
             if (!gemini.models.includes(gemini.default_model))
                 gemini.default_model = gemini.models[0];
+        }
+        // Configuracoes antigas nao tinham template de conversa. Preenche em
+        // memoria com modos somente leitura para evitar que o chat reutilize o
+        // template de execucao e altere o workspace antes do Gate 1.
+        const chatTemplates = {
+            "claude-code": "claude -p --model {model} --permission-mode plan",
+            codex: "codex exec --sandbox read-only --skip-git-repo-check {prompt}",
+            "devin-cli": "devin --model {model} --permission-mode auto -p {prompt}",
+            "gemini-cli": "TERM=xterm-256color NO_COLOR=1 gemini -m {model} --approval-mode plan --skip-trust --output-format text -p {prompt}",
+            "github-copilot-cli": "copilot -p {prompt} --model auto --no-color",
+        };
+        for (const [id, engine] of Object.entries(enginesFile.engines || {})) {
+            if (!engine.chat_exec_template && chatTemplates[id])
+                engine.chat_exec_template = chatTemplates[id];
         }
         return enginesFile;
     }

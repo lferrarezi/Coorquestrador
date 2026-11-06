@@ -38,6 +38,9 @@ function buildPlannerPrompt(opts) {
         "\n# INSTRUCAO DE SAIDA\n",
         "Produza o plano. Ao final, inclua um bloco ```json com o array de tarefas no schema:",
         "[{id, activity, description, size, criticality, dependsOn, acceptance, engine, model, power}]",
+        "Cada tarefa DEVE ter acceptance como texto nao vazio (se houver varios criterios, una-os em uma string).",
+        "dependsOn pode conter SOMENTE IDs de outras tarefas presentes neste mesmo array; nunca use nomes de gates ou estados externos, como gate-1-approved.",
+        "Gate 1 e estado externo do orquestrador, nao e uma dependencia de tarefa.",
         "Use SOMENTE engines com state=disponivel e credito suficiente. Tarefas sem engine viavel: engine=null.",
     ].join("\n");
 }
@@ -58,7 +61,7 @@ function parsePlan(raw) {
             size: normalizeTaskSize(t.size) || "small",
             criticality: t.criticality || "normal",
             dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn : [],
-            acceptance: t.acceptance || "",
+            acceptance: normalizeAcceptance(t.acceptance),
             engine: t.engine || undefined,
             model: t.model || undefined,
             power: t.power || undefined,
@@ -72,6 +75,13 @@ function parsePlan(raw) {
 function normalizeTaskSize(size) {
     const aliases = { XS: "trivial", S: "small", M: "medium", L: "large", XL: "xlarge" };
     return size ? aliases[size] || size : undefined;
+}
+function normalizeAcceptance(value) {
+    if (typeof value === "string")
+        return value.trim();
+    if (Array.isArray(value))
+        return value.filter((v) => typeof v === "string").map((v) => v.trim()).filter(Boolean).join("\n");
+    return "";
 }
 /** Separa o plano em concluidas vs a-recuperar (rejeitadas/bloqueadas). */
 function splitForReplan(demand) {

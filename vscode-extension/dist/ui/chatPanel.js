@@ -215,7 +215,7 @@ class ChatPanelProvider {
         const system = fs.existsSync(agentPath)
             ? fs.readFileSync(agentPath, "utf8")
             : "Voce e o Coorquestrador: ajude a refinar a tarefa antes de planejar e executar.";
-        const prompt = (0, chat_1.buildChatPrompt)(system, this.history);
+        const prompt = (0, chat_1.buildChatPrompt)(`${chat_1.CHAT_READ_ONLY_SYSTEM}\n\n${system}`, this.history);
         const timeout = ef.defaults?.exec_timeout_seconds || 600;
         try {
             const full = await (0, chat_1.runChat)(engineForChat, prompt, c.root, timeout, power, (chunk) => this.post({ type: "assistantChunk", text: chunk }));
