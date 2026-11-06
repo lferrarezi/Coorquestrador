@@ -15,6 +15,7 @@ function run(command, args) {
 try {
   if (fs.existsSync(vsix)) fs.unlinkSync(vsix);
   run("node", ["scripts/validate-version-policy.js"]);
+  run("npm", ["audit", "--audit-level=high"]);
   run("npm", ["run", "compile"]);
   run("node", ["test/core.test.js"]);
   run("npm", ["run", "bundle"]);
