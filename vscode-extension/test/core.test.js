@@ -5,7 +5,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { validatePlan } = require("../dist/core/planValidation");
-const { estimateDemandQuota, crossesGate2 } = require("../dist/core/estimator");
+const { estimateDemandQuota, crossesGate2, validateGate2Threshold } = require("../dist/core/estimator");
 const { executePlan, ExecutionController, windowsTaskkillArgs } = require("../dist/core/executor");
 const { measureUsage } = require("../dist/core/usageParser");
 const { rerouteForQuota } = require("../dist/core/rerouting");
@@ -16,6 +16,7 @@ const { splitForReplan, buildPlannerPrompt, parsePlan, buildReplanPrompt, mergeR
 const { DemandStore } = require("../dist/core/demandStore");
 const { CoorqConfig } = require("../dist/core/config");
 const { buildCommand } = require("../dist/core/commandBuilder");
+const { runChat } = require("../dist/core/chat");
 const { ensureInsideDir, redactCommand, redactSecrets, validateExecTemplate } = require("../dist/core/commandSecurity");
 const { discoverInstalledClis, discoverModels, resolveBinPath, probeAll, invalidateProbeCache } = require("../dist/core/prober");
 const { gate2ReasonsForTask } = require("../dist/core/executionService");
@@ -126,6 +127,28 @@ async function test(name, fn) {
     assert.equal(crossesGate2(0, { cost_gate2_threshold: 0 }), false);
     assert.equal(crossesGate2(1, { cost_gate2_threshold: 0 }), false);
     assert.equal(crossesGate2(100, { cost_gate2_threshold: 100 }), true);
+  });
+
+  await test("validateGate2Threshold rejects invalid values explicitly", () => {
+    assert.deepEqual(validateGate2Threshold(undefined), {
+      valid: false,
+      enabled: false,
+      threshold: null,
+      reason: "Gate 2 threshold ausente ou NaN; configuracao invalida e bloqueada.",
+    });
+    assert.equal(validateGate2Threshold(Number.NaN).valid, false);
+    assert.equal(validateGate2Threshold(-1).valid, false);
+    assert.equal(validateGate2Threshold(Number.POSITIVE_INFINITY).valid, false);
+    assert.equal(validateGate2Threshold(Number.NEGATIVE_INFINITY).valid, false);
+    assert.equal(validateGate2Threshold(0).enabled, false);
+    assert.equal(validateGate2Threshold(5).enabled, true);
+  });
+
+  await test("crossesGate2 fails closed for invalid threshold", () => {
+    assert.throws(() => crossesGate2(1, { cost_gate2_threshold: undefined }), /configuracao invalida e bloqueada/);
+    assert.throws(() => crossesGate2(1, { cost_gate2_threshold: Number.NaN }), /configuracao invalida e bloqueada/);
+    assert.throws(() => crossesGate2(1, { cost_gate2_threshold: -1 }), /configuracao invalida e bloqueada/);
+    assert.throws(() => crossesGate2(Number.NaN, { cost_gate2_threshold: 5 }), /total estimado invalido/);
   });
 
   await test("executePlan respects DAG ordering with injected runner", async () => {
@@ -372,6 +395,42 @@ async function test(name, fn) {
     const loaded = conf.loadEngines();
     assert.ok(loaded.engines.codex.chat_exec_template.includes("--sandbox read-only"));
     assert.ok(!loaded.engines["github-copilot-cli"].chat_exec_template.includes("--allow-all-tools"));
+    assert.equal(loaded.engines["github-copilot-cli"].chat_read_only, true);
+    for (const id of ["claude-code", "codex", "gemini-cli", "github-copilot-cli"]) {
+      assert.ok(loaded.engines[id].chat_exec_template, `${id} deve receber template de chat`);
+      assert.equal(loaded.engines[id].chat_read_only, true, `${id} deve permanecer read-only`);
+    }
+  });
+
+  await test("loadEngines blocks unverified Devin chat mode", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coorq-devin-chat-"));
+    const conf = new CoorqConfig(dir, ".coorq");
+    conf.ensureProjectDefaults();
+    const loaded = conf.loadEngines();
+    assert.equal(loaded.engines["devin-cli"].chat_exec_template, undefined);
+    assert.equal(loaded.engines["devin-cli"].chat_read_only, undefined);
+  });
+
+  await test("runChat fails closed for unsafe or file-mode templates", async () => {
+    const base = {
+      enabled: true, location: "local", host: "localhost", bin: "fake", input_mode: "arg",
+      exec_template: "fake {prompt}", models: ["default"], default_model: "default", powers: ["normal"],
+      unit: "token", chat_exec_template: "fake --permission-mode auto {prompt}", chat_read_only: true,
+    };
+    await assert.rejects(() => runChat(base, "prompt", process.cwd(), 1, "normal", () => {}), /permissao mutavel/);
+    for (const template of [
+      "fake --permission-mode=auto {prompt}",
+      "fake --permission-mode acceptEdits {prompt}",
+      "fake --allow-all-tools {prompt}",
+      "fake --approval-mode=yolo {prompt}",
+      "fake --sandbox=workspace-write {prompt}",
+      "fake --dangerously-bypass-approvals-and-sandbox {prompt}",
+      "fake {prompt}; touch unsafe.txt",
+      "fake $(touch unsafe.txt) {prompt}",
+    ]) {
+      await assert.rejects(() => runChat({ ...base, chat_exec_template: template }, "prompt", process.cwd(), 1, "normal", () => {}), /permissao mutavel/);
+    }
+    await assert.rejects(() => runChat({ ...base, input_mode: "file", chat_exec_template: "fake --sandbox read-only {spec_file}", chat_read_only: true }, "prompt", process.cwd(), 1, "normal", () => {}), /input_mode=file/);
   });
 
   await test("planner contract forbids external gate dependencies and normalizes acceptance", () => {

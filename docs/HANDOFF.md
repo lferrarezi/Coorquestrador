@@ -43,7 +43,7 @@ Separação entre DETERMINISMO e RACIOCÍNIO:
   squad não consegue quebrar a capacidade principal.
 
 ## FORMATO ATUAL
-Extensão do VSCode (versão 1.3.3 pre-release). Repositório:
+Extensão do VSCode (versão produtiva 1.4.0; 1.4.1 em preparação). Repositório:
 github.com/lferrarezi/Coorquestrador (branch main). O escopo atual é exclusivamente
 VS Code; formatos externos foram descartados.
 
@@ -69,8 +69,10 @@ O projeto aberto no VS Code é a referência de trabalho. Na ativação, a exten
 cria `.coorq/` automaticamente quando ausente, com configuração, estado e núcleo
 de agentes padrão. Em `.coorq/`:
 - `engines.yaml`: declara cada assistente (bin, input_mode arg|stdin|file, probe,
-  credit_probe [cota], models_probe [descoberta de modelos], exec_template, models,
-  default_model, powers, unit token|acu, best_for, enabled).
+  credit_probe [cota], models_probe [descoberta de modelos], exec_template,
+  chat_exec_template [somente leitura], chat_read_only, models, default_model,
+  powers, unit token|acu, best_for, enabled). Devin permanece bloqueado no chat
+  até existir um modo read-only comprovado.
 - `cost-table.yaml`: power_multiplier + task_size_tokens/task_size_acu por classe
   (trivial/small/medium/large/xlarge e aliases XS/S/M/L/XL). Representa VOLUME de
   consumo, sem conversão financeira.
@@ -127,13 +129,14 @@ coorq.maxParallel, coorq.requireGate1.
 ## ESTADO ATUAL / O QUE JÁ FUNCIONA
 - Pipeline validado ponta-a-ponta: planejar (claude) → rotear → executar (criou
   arquivo real). 5 assistentes respondem (claude, codex, devin, gemini, copilot).
-- Build 1.3.3 pre-release, empacotada e instalavel (.vsix).
+- Build produtiva 1.4.0 publicada; 1.4.1 inclui o bloqueio do chat mutável e o
+  smoke test pós-publicação para VS Code, VSCodium e registries públicos.
 - Convenção de versão: minor impar e trilha pre-release (0.1.x, 0.3.x);
   minor par e release final (0.2.x, 0.4.x, 1.0.x). Correcoes menores incrementam patch
   dentro da mesma trilha.
 - Repositório versiona `dist/`; os `.vsix` são artefatos gerados e publicados pelo workflow, não arquivos versionados.
 
-## CICLO DE COTA E QUALIDADE (1.3.3)
+## CICLO DE COTA E QUALIDADE (1.4.1)
 - COTA REAL MEDIDA: `usageParser.ts` extrai consumo real do stdout (claude JSON
   usage, codex "tokens used", `usage_parse` declarável por engine). Alimenta
   `realQuota` (flag `realQuotaMeasured`) e o historico `state/history.json`.

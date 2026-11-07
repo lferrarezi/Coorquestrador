@@ -91,6 +91,9 @@ function persistTaskLog(logDir, task, result) {
     task.durationMs = result.durationMs;
 }
 async function runDemandExecution(opts) {
+    const gate2Threshold = (0, estimator_1.validateGate2Threshold)(opts.costTable.cost_gate2_threshold);
+    if (!gate2Threshold.valid)
+        throw new Error(gate2Threshold.reason);
     const demand = opts.demand;
     demand.tasks.forEach((t) => { if (t.status === "planejada")
         t.status = "aprovada"; });

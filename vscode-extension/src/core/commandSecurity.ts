@@ -36,6 +36,29 @@ export function assertValidExecTemplate(cfg: EngineConfig, engineId = "engine") 
   if (errors.length) throw new Error(errors.join(" "));
 }
 
+/**
+ * Impede que conversa livre use um template sem capacidade read-only declarada.
+ * A lista bloqueia flags destrutivas conhecidas; a declaracao continua sendo
+ * obrigatoria para evitar que prompt textual seja tratado como sandbox.
+ */
+export function assertReadOnlyChatTemplate(cfg: EngineConfig, engineId = "engine") {
+  if (!cfg.chat_exec_template || cfg.chat_read_only !== true) {
+    throw new Error(`${engineId}: chat somente leitura nao foi declarado/verificado; conversa bloqueada por seguranca.`);
+  }
+  const template = cfg.chat_exec_template;
+  const normalized = template.replace(/(--[a-z0-9-]+)=/gi, "$1 ");
+  const unsafe = [
+    /--permission-mode\s+(?:auto|acceptEdits|bypassPermissions)\b/i,
+    /--allow-all-tools(?:\s|$)/i,
+    /--approval-mode\s+yolo\b/i,
+    /--sandbox\s+(?:workspace-write|danger-full-access)\b/i,
+    /--dangerously-bypass-approvals-and-sandbox\b/i,
+  ];
+  if (/[;&|><`]/.test(template) || /\$\(|\$\{/.test(template) || unsafe.some((pattern) => pattern.test(normalized))) {
+    throw new Error(`${engineId}: chat_exec_template contem permissao mutavel.`);
+  }
+}
+
 export function sanitizeTemplateValue(value: string, field: string): string {
   if (!value || !SAFE_ARG.test(value)) {
     throw new Error(`${field} contem caracteres nao permitidos para comando shell.`);

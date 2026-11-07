@@ -39,7 +39,12 @@ function runChat(engineCfg, prompt, cwd, timeoutSec, power, onChunk) {
             return;
         }
         const chatCfg = { ...engineCfg, exec_template: template };
+        (0, commandSecurity_1.assertReadOnlyChatTemplate)(chatCfg, "chat");
         (0, commandSecurity_1.assertValidExecTemplate)(chatCfg, "chat");
+        if (engineCfg.input_mode === "file") {
+            reject(new Error("Chat somente leitura nao suporta input_mode=file sem arquivo de prompt; conversa bloqueada."));
+            return;
+        }
         let command = template
             .replace("{model}", (0, commandSecurity_1.sanitizeTemplateValue)(engineCfg.default_model, "model"))
             .replace("{power}", (0, commandSecurity_1.sanitizeTemplateValue)(power, "power"))

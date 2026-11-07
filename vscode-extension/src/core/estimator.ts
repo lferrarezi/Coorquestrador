@@ -16,6 +16,13 @@ export interface QuotaEstimate {
   totalByUnit: Record<string, number>;
 }
 
+export interface Gate2ThresholdDecision {
+  valid: boolean;
+  enabled: boolean;
+  threshold: number | null;
+  reason: string;
+}
+
 export function estimateTaskQuota(task: Task, cost: CostTable): QuotaAmount {
   const model = task.model ? cost.models[task.model] : undefined;
   const unit = model?.unit || task.quotaUnit || "token";
@@ -74,10 +81,44 @@ export function estimateDemand(tasks: Task[], cost: CostTable): { perTask: Recor
   return { perTask, total };
 }
 
+export function validateGate2Threshold(value: unknown): Gate2ThresholdDecision {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return {
+      valid: false,
+      enabled: false,
+      threshold: null,
+      reason: "Gate 2 threshold ausente ou NaN; configuracao invalida e bloqueada.",
+    };
+  }
+  if (!Number.isFinite(value) || value < 0) {
+    return {
+      valid: false,
+      enabled: false,
+      threshold: null,
+      reason: "Gate 2 threshold deve ser finito e nao negativo; configuracao invalida e bloqueada.",
+    };
+  }
+  if (value === 0) {
+    return {
+      valid: true,
+      enabled: false,
+      threshold: 0,
+      reason: "Gate 2 desabilitado explicitamente por threshold zero.",
+    };
+  }
+  return {
+    valid: true,
+    enabled: true,
+    threshold: value,
+    reason: "Gate 2 habilitado por threshold valido.",
+  };
+}
+
 export function crossesGate2(total: number, cost: CostTable): boolean {
-  // Zero desativa o gate monetario legado; caso contrario toda tarefa
-  // acionaria revisao porque qualquer custo nao-negativo satisfaz >= 0.
-  return cost.cost_gate2_threshold > 0 && total >= cost.cost_gate2_threshold;
+  if (!Number.isFinite(total)) throw new Error("Gate 2 total estimado invalido; configuracao bloqueada.");
+  const decision = validateGate2Threshold(cost.cost_gate2_threshold);
+  if (!decision.valid) throw new Error(decision.reason);
+  return decision.enabled && total >= decision.threshold!;
 }
 
 export function crossesQuotaGate2(task: Task, cost: CostTable): boolean {

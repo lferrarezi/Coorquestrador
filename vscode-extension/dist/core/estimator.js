@@ -7,6 +7,7 @@ exports.estimateTaskQuota = estimateTaskQuota;
 exports.estimateDemandQuota = estimateDemandQuota;
 exports.estimateTask = estimateTask;
 exports.estimateDemand = estimateDemand;
+exports.validateGate2Threshold = validateGate2Threshold;
 exports.crossesGate2 = crossesGate2;
 exports.crossesQuotaGate2 = crossesQuotaGate2;
 function estimateTaskQuota(task, cost) {
@@ -63,10 +64,45 @@ function estimateDemand(tasks, cost) {
     }
     return { perTask, total };
 }
+function validateGate2Threshold(value) {
+    if (typeof value !== "number" || Number.isNaN(value)) {
+        return {
+            valid: false,
+            enabled: false,
+            threshold: null,
+            reason: "Gate 2 threshold ausente ou NaN; configuracao invalida e bloqueada.",
+        };
+    }
+    if (!Number.isFinite(value) || value < 0) {
+        return {
+            valid: false,
+            enabled: false,
+            threshold: null,
+            reason: "Gate 2 threshold deve ser finito e nao negativo; configuracao invalida e bloqueada.",
+        };
+    }
+    if (value === 0) {
+        return {
+            valid: true,
+            enabled: false,
+            threshold: 0,
+            reason: "Gate 2 desabilitado explicitamente por threshold zero.",
+        };
+    }
+    return {
+        valid: true,
+        enabled: true,
+        threshold: value,
+        reason: "Gate 2 habilitado por threshold valido.",
+    };
+}
 function crossesGate2(total, cost) {
-    // Zero desativa o gate monetario legado; caso contrario toda tarefa
-    // acionaria revisao porque qualquer custo nao-negativo satisfaz >= 0.
-    return cost.cost_gate2_threshold > 0 && total >= cost.cost_gate2_threshold;
+    if (!Number.isFinite(total))
+        throw new Error("Gate 2 total estimado invalido; configuracao bloqueada.");
+    const decision = validateGate2Threshold(cost.cost_gate2_threshold);
+    if (!decision.valid)
+        throw new Error(decision.reason);
+    return decision.enabled && total >= decision.threshold;
 }
 function crossesQuotaGate2(task, cost) {
     const threshold = cost.quota_gate2_threshold;

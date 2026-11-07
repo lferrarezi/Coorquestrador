@@ -18,6 +18,9 @@ try {
   run("npm", ["audit", "--audit-level=high"]);
   run("npm", ["run", "compile"]);
   run("node", ["test/core.test.js"]);
+  run("node", ["--test", "test/atdd-release-runtime-distribution-p0.test.js"]);
+  run("node", ["-c", path.join(root, "scripts", "post-publish-smoke.js")]);
+  run("node", ["-c", path.join(root, "smoke", "runtime-test.js")]);
   run("npm", ["run", "bundle"]);
   run("node", ["-c", path.join(root, "dist", "extension.js")]);
   run("npx", ["vsce", "package", "--out", vsix]);

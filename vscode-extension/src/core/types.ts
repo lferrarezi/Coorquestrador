@@ -22,6 +22,8 @@ export interface EngineConfig {
   exec_template: string;
   // Template separado para conversa livre, preferencialmente somente leitura.
   chat_exec_template?: string;
+  // Exige declaracao explicita de que o template de conversa foi verificado.
+  chat_read_only?: boolean;
   models: string[];
   default_model: string;
   powers: string[];

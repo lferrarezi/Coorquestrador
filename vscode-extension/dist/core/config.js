@@ -67,6 +67,7 @@ engines:
       json_path: "$.credits_remaining"
     exec_template: "claude -p --model {model} --permission-mode acceptEdits"
     chat_exec_template: "claude -p --model {model} --permission-mode plan"
+    chat_read_only: true
     models: [opus, sonnet, haiku]
     default_model: sonnet
     powers: [low, normal, medium, high]
@@ -93,6 +94,7 @@ engines:
     # Sem -m, o proprio CLI escolhe um modelo valido para a autenticacao corrente.
     exec_template: "codex exec --skip-git-repo-check {prompt}"
     chat_exec_template: "codex exec --sandbox read-only --skip-git-repo-check {prompt}"
+    chat_read_only: true
     models: [default]
     default_model: default
     powers: [low, normal, medium, high]
@@ -113,7 +115,6 @@ engines:
       parse: json
       json_path: "$.acu_remaining"
     exec_template: "devin --model {model} --permission-mode auto -p {prompt}"
-    chat_exec_template: "devin --model {model} --permission-mode auto -p {prompt}"
     models_probe:
       command: "devin --model x --permission-mode auto -p ping 2>&1 | grep -oE '(claude|gemini|gpt|deepseek|glm|kimi|swe)-[a-z0-9.-]+' | sort -u"
       parse: lines
@@ -138,6 +139,7 @@ engines:
       json_path: "$.quota.remaining"
     exec_template: "TERM=xterm-256color NO_COLOR=1 gemini -m {model} --approval-mode plan --skip-trust --output-format text -p {prompt}"
     chat_exec_template: "TERM=xterm-256color NO_COLOR=1 gemini -m {model} --approval-mode plan --skip-trust --output-format text -p {prompt}"
+    chat_read_only: true
     models_probe:
       command: ""
       parse: lines
@@ -163,6 +165,7 @@ engines:
     # o plano atual. O alias auto e validado pelo proprio Copilot CLI.
     exec_template: "copilot -p {prompt} --model auto --allow-all-tools --no-color"
     chat_exec_template: "copilot -p {prompt} --model auto --no-color"
+    chat_read_only: true
     models: [auto]
     default_model: auto
     powers: [normal]
@@ -363,13 +366,24 @@ class CoorqConfig {
         const chatTemplates = {
             "claude-code": "claude -p --model {model} --permission-mode plan",
             codex: "codex exec --sandbox read-only --skip-git-repo-check {prompt}",
-            "devin-cli": "devin --model {model} --permission-mode auto -p {prompt}",
             "gemini-cli": "TERM=xterm-256color NO_COLOR=1 gemini -m {model} --approval-mode plan --skip-trust --output-format text -p {prompt}",
             "github-copilot-cli": "copilot -p {prompt} --model auto --no-color",
         };
+        const readOnlyChatEngines = new Set(Object.keys(chatTemplates));
+        const devin = enginesFile.engines?.["devin-cli"];
+        if (devin && /--permission-mode\s+auto\b/i.test(devin.chat_exec_template || "")) {
+            // Nao ha modo read-only comprovado para este CLI; falha fechado.
+            devin.chat_exec_template = undefined;
+            devin.chat_read_only = false;
+        }
         for (const [id, engine] of Object.entries(enginesFile.engines || {})) {
-            if (!engine.chat_exec_template && chatTemplates[id])
+            if (!engine.chat_exec_template && chatTemplates[id]) {
                 engine.chat_exec_template = chatTemplates[id];
+                engine.chat_read_only = true;
+            }
+            else if (readOnlyChatEngines.has(id) && engine.chat_exec_template === chatTemplates[id] && engine.chat_read_only === undefined) {
+                engine.chat_read_only = true;
+            }
         }
         return enginesFile;
     }

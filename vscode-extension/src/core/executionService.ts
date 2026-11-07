@@ -8,7 +8,7 @@ import { buildCommand } from "./commandBuilder";
 import { redactCommand, redactSecrets } from "./commandSecurity";
 import { DemandStore } from "./demandStore";
 import { executePlan, ExecResult, ExecutionController } from "./executor";
-import { crossesGate2, crossesQuotaGate2 } from "./estimator";
+import { crossesGate2, crossesQuotaGate2, validateGate2Threshold } from "./estimator";
 import { HistoryStore } from "./historyStore";
 import { measureUsage } from "./usageParser";
 import { reviewTask, ReviewVerdict } from "./reviewer";
@@ -98,6 +98,9 @@ function persistTaskLog(logDir: string, task: Task, result: ExecResult) {
 }
 
 export async function runDemandExecution(opts: RunDemandOptions): Promise<RunDemandResult> {
+  const gate2Threshold = validateGate2Threshold(opts.costTable.cost_gate2_threshold);
+  if (!gate2Threshold.valid) throw new Error(gate2Threshold.reason);
+
   const demand = opts.demand;
   demand.tasks.forEach((t) => { if (t.status === "planejada") t.status = "aprovada"; });
   demand.status = "em-execucao";

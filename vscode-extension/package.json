@@ -2,7 +2,7 @@
   "name": "coorquestrador",
   "displayName": "Coorquestrador",
   "description": "Meta-orquestrador de runtime: planeja demandas, escolhe CLIs de IA, modelos e esforço, estima cota e executa com gates HITL no projeto aberto.",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "publisher": "lferrarezi",
   "author": {
     "name": "Luiz Alberto Abarca Ferrarezi"
@@ -168,7 +168,8 @@
     "bundle": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --minify",
     "package": "npm run bundle && vsce package",
     "validate:version": "node scripts/validate-version-policy.js",
-    "release:check": "node scripts/release-check.js"
+    "release:check": "node scripts/release-check.js",
+    "smoke:post-publish": "node scripts/post-publish-smoke.js"
   },
   "devDependencies": {
     "@types/node": "^20.19.41",

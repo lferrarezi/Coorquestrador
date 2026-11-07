@@ -4,7 +4,7 @@
 
 import { spawn } from "child_process";
 import { EngineConfig } from "./types";
-import { assertValidExecTemplate, sanitizeTemplateValue } from "./commandSecurity";
+import { assertReadOnlyChatTemplate, assertValidExecTemplate, sanitizeTemplateValue } from "./commandSecurity";
 
 /** Escapa para uso seguro como argumento unico de shell (aspas simples). */
 function shellQuote(s: string): string {
@@ -49,7 +49,12 @@ export function runChat(
       return;
     }
     const chatCfg = { ...engineCfg, exec_template: template };
+    assertReadOnlyChatTemplate(chatCfg, "chat");
     assertValidExecTemplate(chatCfg, "chat");
+    if (engineCfg.input_mode === "file") {
+      reject(new Error("Chat somente leitura nao suporta input_mode=file sem arquivo de prompt; conversa bloqueada."));
+      return;
+    }
     let command = template
       .replace("{model}", sanitizeTemplateValue(engineCfg.default_model, "model"))
       .replace("{power}", sanitizeTemplateValue(power, "power"))

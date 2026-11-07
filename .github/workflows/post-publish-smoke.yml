@@ -1,0 +1,124 @@
+name: Post-publish smoke
+
+on:
+  workflow_run:
+    workflows: ["Publish VSCode Extension"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versao produtiva a validar; vazio usa package.json"
+        required: false
+        type: string
+
+concurrency:
+  group: post-publish-smoke-${{ github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - name: Resolve version and ref
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="$INPUT_VERSION"
+          if [ -z "$VERSION" ]; then VERSION="$(node -p "require('./vscode-extension/package.json').version")"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Expose checkout ref
+        id: ref
+        run: echo "ref=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
+
+  registry:
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+      - name: Download productive VSIX
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/coorq-smoke"
+          gh release download "v${{ needs.resolve.outputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "coorquestrador-${{ needs.resolve.outputs.version }}.vsix" \
+            --dir "$RUNNER_TEMP/coorq-smoke"
+      - name: Verify public registries and VSIX
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node vscode-extension/scripts/post-publish-smoke.js \
+            --version "${{ needs.resolve.outputs.version }}" \
+            --vsix "$RUNNER_TEMP/coorq-smoke/coorquestrador-${{ needs.resolve.outputs.version }}.vsix" \
+            --check-registries --attempts 20 --interval-seconds 15
+
+  editor:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: VS Code
+            cask: visual-studio-code
+            bin: code
+          - name: VSCodium
+            cask: vscodium
+            bin: codium
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+      - name: Install ${{ matrix.name }}
+        run: |
+          if ! command -v "${{ matrix.bin }}" >/dev/null 2>&1; then
+            brew install --cask "${{ matrix.cask }}"
+          fi
+          command -v "${{ matrix.bin }}"
+      - name: Download productive VSIX
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/coorq-smoke"
+          gh release download "v${{ needs.resolve.outputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "coorquestrador-${{ needs.resolve.outputs.version }}.vsix" \
+            --dir "$RUNNER_TEMP/coorq-smoke"
+      - name: Install and activate extension
+        run: |
+          node vscode-extension/scripts/post-publish-smoke.js \
+            --version "${{ needs.resolve.outputs.version }}" \
+            --vsix "$RUNNER_TEMP/coorq-smoke/coorquestrador-${{ needs.resolve.outputs.version }}.vsix" \
+            --editor "${{ matrix.bin }}" \
+            --runtime-test "$GITHUB_WORKSPACE/vscode-extension/smoke/runtime-test.js"

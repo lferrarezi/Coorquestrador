@@ -15,7 +15,7 @@ Veja o README da raiz do projeto para arquitetura, instalação e uso.
 Logs de execução são gravados em `.coorq/logs/<demanda>/<tarefa>.log`.
 A view **Tarefas (por projeto)** expande demandas em etapas; tarefas com log podem ser abertas diretamente pelo menu de contexto ou clique no item.
 
-> Build de teste **1.3.3**.
+> Build produtiva **1.4.0**; `1.4.1` adiciona bloqueio read-only no chat e smoke test pós-publicação.
 
 ## Versionamento
 
@@ -28,3 +28,5 @@ A view **Tarefas (por projeto)** expande demandas em etapas; tarefas com log pod
 - `npm test` compila e roda testes de core.
 - `npm run bundle` gera `dist/extension.js` empacotado via esbuild.
 - `npm run release:check` valida versao, compila, testa, gera bundle, empacota VSIX temporario e valida o zip.
+- `npm run smoke:post-publish -- --version <versao> --vsix <arquivo.vsix> --editor <code|codium> --runtime-test smoke/runtime-test.js` instala e exerce a extensão no editor escolhido.
+- `npm run smoke:post-publish -- --version <versao> --vsix <arquivo.vsix> --check-registries` valida Marketplace, Open VSX e GitHub Release.
