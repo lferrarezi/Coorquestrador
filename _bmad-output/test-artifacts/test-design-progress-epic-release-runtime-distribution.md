@@ -37,7 +37,9 @@ Pré-requisitos observados:
 - Epic requirements: retrospectiva em `_bmad-output/implementation-artifacts/epic-release-runtime-distribution-retro-2026-11-06.md`.
 - Architecture context: `AGENTS.md`, `README.md`, `docs/HANDOFF.md` e implementação em `vscode-extension/`.
 - Existing stories/sprint status: ausentes.
-- Current implementation target: `1.4.1` preparado localmente, ainda não publicado.
+- Current implementation target: `1.4.1` publicada produtivamente e validada pelo GitHub Actions.
+
+Atualização pós-publicação (2026-11-07): o smoke inicial registrou atraso de propagação do Marketplace; o retry `42336102851` passou em registries, VS Code e VSCodium.
 
 # Contexto carregado
 
@@ -57,8 +59,8 @@ Cobertura observada:
 
 - Cobertura determinística de core: ampla para DAG, validação, estimação, probes, persistência, segurança de comandos, reroteamento, revisão e chat fail-closed.
 - Cobertura de runtime: teste real local em VS Code e VSCodium, com instalação do VSIX, ativação, registro de comandos e inicialização de `.coorq`.
-- Cobertura de distribuição: script valida VSIX, Marketplace, Open VSX e GitHub Release; workflow pós-publicação ainda depende de execução futura no GitHub.
-- Lacunas principais: ausência de critérios de aceite formais, ausência de execução do workflow pós-publicação em CI, flags de editor/runner dependentes de ambiente macOS e cobertura parcial de migrações/configurações customizadas.
+- Cobertura de distribuição: script e workflow validaram VSIX, Marketplace, Open VSX e GitHub Release; o workflow pós-publicação passou no GitHub.
+- Lacunas principais: ausência de critérios de aceite formais, flags de editor/runner dependentes de ambiente macOS e cobertura parcial de migrações/configurações customizadas.
 
 # Riscos e testabilidade
 
@@ -71,9 +73,9 @@ O registro usa probabilidade e impacto de 1 a 3, com score `P x I`. Scores 6–8
 | ID | Categoria | Risco baseado em evidência | P | I | Score | Tratamento, evidência e responsável | Horizonte |
 |---|---|---|---:|---:|---:|---|---|
 | R-01 | SEC | Um engine customizado pode reintroduzir chat mutável antes do Gate 1 por template inseguro, flag de permissão ampla ou modo de arquivo não controlado. A retrospectiva documenta o incidente com Devin; a implementação atual adicionou bloqueio fail-closed e testes. | 2 | 3 | 6 | Mitigar com `assertReadOnlyChatTemplate`, rejeição de flags perigosas, bloqueio de Devin sem template seguro, testes unitários e fixture de chat read-only. Responsável: maintainer da extensão. Evidência: `vscode-extension/src/core/{chat,commandSecurity,config}.ts`, `vscode-extension/test/core.test.js`, smoke de runtime. | Antes do próximo publish; monitorar em toda alteração de configuração. |
-| R-02 | OPS | O workflow pós-publicação pode não ser executado ou pode divergir do comportamento local; a versão 1.4.1 ainda não foi publicada nem validada pelo GitHub Actions. | 2 | 3 | 6 | Mitigar com `post-publish-smoke.yml` acionado por `workflow_run` e dispatch manual, verificando GitHub Release, Open VSX, Marketplace, VS Code e VSCodium. Responsável: maintainer/release. Evidência: execução CI verde e artefatos do workflow. | Na primeira publicação de 1.4.1 e após mudanças no pipeline. |
-| R-03 | TECH | Os CLIs e caminhos de instalação dos editores variam no macOS; o binário Homebrew `code` encontrado localmente não era o launcher do VS Code oficial, enquanto `code` e `codium` têm diferenças operacionais. | 3 | 2 | 6 | Mitigar com matriz explícita de editores, resolução do launcher no runner macOS e smoke que verifica instalação, ativação, comandos e workspace. Responsável: maintainer/release. Evidência: smoke local em ambos os editores e matriz CI. | Antes do publish produtivo; reavaliar se imagens macOS mudarem. |
-| R-04 | OPS | Registries públicos podem responder antes de propagar a versão ou expor endpoints com identificadores distintos; o smoke precisou corrigir o namespace Open VSX e requer retry. | 2 | 3 | 6 | Mitigar com polling limitado, verificação de versão exata, estado produtivo e asset VSIX no GitHub Release. Responsável: maintainer/release. Evidência: saída JSON do `post-publish-smoke.js` e logs CI. | Após cada publish; falha após o limite deve impedir aceite. |
+| R-02 | OPS | O workflow pós-publicação pode não ser executado ou pode divergir do comportamento local. | 2 | 3 | 6 | Mitigado com `post-publish-smoke.yml` acionado por `workflow_run` e dispatch manual, verificando GitHub Release, Open VSX, Marketplace, VS Code e VSCodium. Evidência: runs `42335609917` e `42336102851`; o primeiro falhou apenas por propagação e o retry passou. | Após mudanças no pipeline. |
+| R-03 | TECH | Os CLIs e caminhos de instalação dos editores variam no macOS; o binário Homebrew `code` encontrado localmente não era o launcher do VS Code oficial, enquanto `code` e `codium` têm diferenças operacionais. | 3 | 2 | 6 | Mitigado para a matriz suportada com instalação, ativação e workspace temporário em VS Code e VSCodium no run `42336102851`. | Reavaliar se imagens macOS mudarem. |
+| R-04 | OPS | Registries públicos podem responder antes de propagar a versão ou expor endpoints com identificadores distintos; o smoke precisou corrigir o namespace Open VSX e usar retry. | 2 | 3 | 6 | Mitigado com polling limitado, verificação de versão exata, estado produtivo e asset VSIX no GitHub Release. Evidência: falha de propagação no run `42335609917` e convergência no `42336102851`. | Após cada publish; falha após o limite deve impedir aceite. |
 | R-05 | TECH | Migrações de configuração legada podem falhar para variantes de conteúdo ou wrappers customizados; a retrospectiva registra cobertura parcial. | 2 | 2 | 4 | Monitorar e ampliar a matriz de fixtures para templates legados, engines conhecidos e wrappers. Responsável: maintainer. Evidência: testes de configuração e diff do YAML carregado. | Próximo ciclo de manutenção; não bloquear 1.4.1 isoladamente. |
 | R-06 | SEC | Limiares de segurança ausentes, nulos ou inválidos podem desabilitar o Gate 2 de forma silenciosa; a retrospectiva identifica essa lacuna. | 2 | 3 | 6 | Mitigar com validação fail-closed para `undefined`, `NaN`, negativo e zero, além de testes que comprovem bloqueio explícito. Responsável: maintainer de runtime. Evidência: testes de `commandSecurity` e logs de decisão do Gate 2. | Antes de considerar o hardening completo; pendência de implementação. |
 | R-07 | TECH | A ausência de critérios de aceite e histórias formais reduz a rastreabilidade entre objetivo do épico, risco e evidência; o repositório não contém PRD/ADR/sprint-status aplicável. | 3 | 2 | 6 | Mitigar com esta matriz, IDs de risco estáveis, critérios de gate no plano e registro de evidências por execução. Responsável: maintainer/release. Evidência: este artefato e relatório retrospectivo versionado. | Imediato; manter até formalizar requisitos. |
@@ -102,7 +104,7 @@ O registro usa probabilidade e impacto de 1 a 3, com score `P x I`. Scores 6–8
 
 ## Decisões de risco
 
-R-01, R-02, R-03, R-04, R-06 e R-07 exigem cobertura explícita no plano seguinte. R-05, R-08 e R-09 são monitoráveis, desde que não se convertam em falha de segurança, artefato incorreto ou publicação não rastreável. Nenhum risco recebe score 9 com a evidência atual; isso não equivale a dizer que a publicação de 1.4.1 está aprovada, pois R-02 permanece sem execução no ambiente GitHub.
+R-01, R-06 e R-07 exigem cobertura explícita no plano seguinte. R-02, R-03 e R-04 foram mitigados com evidência produtiva em `42336102851`. R-05, R-08 e R-09 são monitoráveis, desde que não se convertam em falha de segurança, artefato incorreto ou publicação não rastreável. Nenhum risco recebe score 9 com a evidência atual.
 
 # Plano de cobertura e estratégia de execução
 

@@ -231,7 +231,7 @@ As faixas incluem fixtures, diagnóstico e integração CI; não pressupõem run
 **Estratégia:** executar `post-publish-smoke.yml` após a release, preservar run ID e conferir VSIX/registries/editores.
 **Owner:** maintainer/release.
 **Timeline:** primeira publicação de `v1.4.1`.
-**Status:** Implementado localmente; não executado para `v1.4.1`.
+**Status:** Validado no GitHub Actions para `v1.4.1` no run `42336102851`.
 **Verificação:** workflow verde com logs de registry e dois jobs macOS concluídos.
 
 ### R-03: divergência de launcher/editor (Score 6)
@@ -239,7 +239,7 @@ As faixas incluem fixtures, diagnóstico e integração CI; não pressupõem run
 **Estratégia:** usar matriz explícita e não assumir que qualquer binário chamado `code` representa o VS Code oficial.
 **Owner:** maintainer/release.
 **Timeline:** antes do publish produtivo.
-**Status:** Smoke local aprovado nos dois editores; CI pendente.
+**Status:** Smoke produtivo aprovado em VS Code e VSCodium no run `42336102851`.
 **Verificação:** ativação real e comandos registrados em ambos os jobs.
 
 ### R-04: registry atrasado ou endpoint incorreto (Score 6)
@@ -247,7 +247,7 @@ As faixas incluem fixtures, diagnóstico e integração CI; não pressupõem run
 **Estratégia:** usar endpoint `publisher/name`, polling limitado e validação de versão/estado produtivo/asset.
 **Owner:** maintainer/release.
 **Timeline:** após cada publish.
-**Status:** Script validado contra `v1.4.0`; `v1.4.1` pendente.
+**Status:** Script e workflow validados contra `v1.4.1`; o atraso inicial do Marketplace foi resolvido por retry.
 **Verificação:** saída estruturada dos três registries sem divergência.
 
 ### R-06: Gate 2 inválido desabilitado silenciosamente (Score 6)
@@ -372,3 +372,10 @@ As faixas incluem fixtures, diagnóstico e integração CI; não pressupõem run
 - Findings adiados: 0.
 - Findings rejeitados como falsos positivos: 6.
 - Validação pós-correção: `npm run release:check` passou; `npm test` passou; ATDD P0 passou (9/9); smoke público produtivo de Open VSX, Marketplace e GitHub passou para `1.4.0`; validação negativa de `--interval-seconds` passou; `git diff --check` e parsing dos workflows YAML passaram.
+
+### Post-publication closure — 2026-11-07
+
+- `v1.4.1` foi publicada como release produtiva pelo GitHub Actions no run `42335548684`, com tag, GitHub Release e VSIX rastreável.
+- O primeiro smoke pós-publicação (`42335609917`) falhou somente por propagação do Marketplace: Open VSX e GitHub já retornavam `1.4.1`, enquanto o Marketplace ainda retornava `1.4.0` após 20 tentativas.
+- Após a convergência do índice, o retry manual `42336102851` passou integralmente: GitHub Release, Open VSX, Marketplace, VS Code e VSCodium.
+- R-02, R-03 e R-04 possuem evidência produtiva; a pendência de execução no GitHub foi encerrada. R-09 permanece monitorável devido às 3 vulnerabilidades moderadas transitivas de `minimatch`.

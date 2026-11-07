@@ -43,7 +43,7 @@ Separação entre DETERMINISMO e RACIOCÍNIO:
   squad não consegue quebrar a capacidade principal.
 
 ## FORMATO ATUAL
-Extensão do VSCode (versão produtiva 1.4.0; 1.4.1 em preparação). Repositório:
+Extensão do VSCode (versão produtiva 1.4.1). Repositório:
 github.com/lferrarezi/Coorquestrador (branch main). O escopo atual é exclusivamente
 VS Code; formatos externos foram descartados.
 
@@ -129,8 +129,12 @@ coorq.maxParallel, coorq.requireGate1.
 ## ESTADO ATUAL / O QUE JÁ FUNCIONA
 - Pipeline validado ponta-a-ponta: planejar (claude) → rotear → executar (criou
   arquivo real). 5 assistentes respondem (claude, codex, devin, gemini, copilot).
-- Build produtiva 1.4.0 publicada; 1.4.1 inclui o bloqueio do chat mutável e o
-  smoke test pós-publicação para VS Code, VSCodium e registries públicos.
+- Build produtiva 1.4.1 publicada; inclui o bloqueio do chat mutável e o smoke test
+  pós-publicação para VS Code, VSCodium e registries públicos.
+- Evidência produtiva em 2026-11-07: publish `42335548684`; o primeiro smoke
+  (`42335609917`) aguardou a propagação do Marketplace, e o retry `42336102851`
+  passou em GitHub Release, Open VSX, Marketplace, VS Code e VSCodium. Release:
+  `https://github.com/lferrarezi/Coorquestrador/releases/tag/v1.4.1`.
 - Convenção de versão: minor impar e trilha pre-release (0.1.x, 0.3.x);
   minor par e release final (0.2.x, 0.4.x, 1.0.x). Correcoes menores incrementam patch
   dentro da mesma trilha.

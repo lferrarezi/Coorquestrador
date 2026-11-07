@@ -1,5 +1,5 @@
 <!-- bmad:context -->
-<!-- Verified 2026-11-06 against 37fb306cdb0201b0b0cd1d5376ce683de06c22d5. Managed by bmad-project-context; edits inside this block are replaced on refresh. -->
+<!-- Verified 2026-11-07 against 54e090a. Managed by bmad-project-context; edits inside this block are replaced on refresh. -->
 
 ## Coorquestrador
 
@@ -40,6 +40,5 @@ Extensão VS Code em TypeScript para planejar, rotear e executar tarefas por CLI
 
 - Não use `JSON.stringify` para quoting de prompts em argumentos shell; use o quoting seguro existente.
 - Feche `stdin` quando o modo de entrada não for `stdin`, pois algumas CLIs aguardam EOF indefinidamente.
-- O `package.json` e o `package-lock.json` atualmente apresentam versões divergentes; corrija essa divergência antes de um release.
-- `.github/workflows/ci 2.yml` é um arquivo não rastreado que duplica o CI principal; verifique-o antes de alterar ou criar workflows.
+- Mantenha `package.json` e `package-lock.json` sincronizados; valide a versão antes de um release.
 <!-- /bmad:context -->
