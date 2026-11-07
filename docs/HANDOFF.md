@@ -135,6 +135,9 @@ coorq.maxParallel, coorq.requireGate1.
   (`42335609917`) aguardou a propagação do Marketplace, e o retry `42336102851`
   passou em GitHub Release, Open VSX, Marketplace, VS Code e VSCodium. Release:
   `https://github.com/lferrarezi/Coorquestrador/releases/tag/v1.4.1`.
+- Auditoria da cadeia de empacotamento: `npm audit --audit-level=moderate` sem
+  vulnerabilidades após fixar `minimatch` em `11.0.5` via `overrides`, mantendo
+  `@vscode/vsce` 4.1.0 e `ovsx` 1.3.0.
 - Convenção de versão: minor impar e trilha pre-release (0.1.x, 0.3.x);
   minor par e release final (0.2.x, 0.4.x, 1.0.x). Correcoes menores incrementam patch
   dentro da mesma trilha.

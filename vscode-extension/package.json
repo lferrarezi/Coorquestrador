@@ -181,5 +181,8 @@
   },
   "dependencies": {
     "yaml": "^2.9.0"
+  },
+  "overrides": {
+    "minimatch": "11.0.5"
   }
 }

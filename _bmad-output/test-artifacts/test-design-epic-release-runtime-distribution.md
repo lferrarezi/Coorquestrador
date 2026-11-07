@@ -378,4 +378,4 @@ As faixas incluem fixtures, diagnóstico e integração CI; não pressupõem run
 - `v1.4.1` foi publicada como release produtiva pelo GitHub Actions no run `42335548684`, com tag, GitHub Release e VSIX rastreável.
 - O primeiro smoke pós-publicação (`42335609917`) falhou somente por propagação do Marketplace: Open VSX e GitHub já retornavam `1.4.1`, enquanto o Marketplace ainda retornava `1.4.0` após 20 tentativas.
 - Após a convergência do índice, o retry manual `42336102851` passou integralmente: GitHub Release, Open VSX, Marketplace, VS Code e VSCodium.
-- R-02, R-03 e R-04 possuem evidência produtiva; a pendência de execução no GitHub foi encerrada. R-09 permanece monitorável devido às 3 vulnerabilidades moderadas transitivas de `minimatch`.
+- R-02, R-03 e R-04 possuem evidência produtiva; a pendência de execução no GitHub foi encerrada. R-09 foi mitigado com `overrides.minimatch = 11.0.5`; `npm audit --audit-level=moderate` passou sem vulnerabilidades, mantendo `@vscode/vsce` 4.1.0 e `ovsx` 1.3.0.
